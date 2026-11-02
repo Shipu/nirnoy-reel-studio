@@ -29,7 +29,9 @@ button { font: inherit; font-size: 15px; border: 0; border-radius: 10px; padding
 button:hover:not(:disabled) { background: var(--primary-hover); }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
 button.secondary { background: #eef2ff; color: var(--primary); }
+button.secondary:hover:not(:disabled) { background: #e0e7ff; }
 button.link { background: none; color: var(--primary); padding: 0; }
+button.link:hover:not(:disabled) { background: none; text-decoration: underline; }
 .row { display: flex; gap: 8px; }
 .row input { flex: 1; }
 .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
