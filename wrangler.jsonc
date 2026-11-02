@@ -1,28 +1,34 @@
 {
-  "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "nirnoy-reel-studio",
-  "main": "worker/index.ts",
-  "compatibility_date": "2025-10-01",
-  "assets": {
-    "directory": "./dist",
-    "binding": "ASSETS",
-    "not_found_handling": "single-page-application",
-    "run_worker_first": ["/api/*"]
-  },
-  "vars": {
-    // Laravel base URL, no trailing slash (production or stage).
-    "NIRNOY_API_BASE": "https://REPLACE_WITH_NIRNOY_API_URL",
-    // From Cloudflare Zero Trust → Access → your application.
-    "ACCESS_TEAM_DOMAIN": "https://REPLACE_TEAM.cloudflareaccess.com",
-    "ACCESS_AUD": "REPLACE_WITH_ACCESS_APPLICATION_AUD"
-  },
-  "d1_databases": [
-    {
-      "binding": "DB",
-      "database_name": "nirnoy-reel-studio",
-      "database_id": "REPLACE_WITH_D1_DATABASE_ID",
-      "migrations_dir": "migrations"
-    }
-  ],
-  "observability": { "enabled": true }
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "nirnoy-reel-studio",
+	"main": "worker/index.ts",
+	"compatibility_date": "2025-10-01",
+	"assets": {
+		"directory": "./dist",
+		"binding": "ASSETS",
+		"not_found_handling": "single-page-application",
+		"run_worker_first": [
+			"/api/*"
+		]
+	},
+	"vars": {
+		// Laravel base URL, no trailing slash (production or stage).
+		"NIRNOY_API_BASE": "https://stage-backend.nirnoy.app",
+		// From Cloudflare Zero Trust → Access → your application.
+		"ACCESS_TEAM_DOMAIN": "https://nirnoy.cloudflareaccess.com",
+		"ACCESS_AUD": "8c05842b64466f4bbddc794e6567148e81922d948fae118b660935871f4e8a8b"
+	},
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "nirnoy-reel-studio",
+			"database_id": "dd4ef41b-b1b5-4499-9978-4a222aa171b7",
+			"migrations_dir": "migrations"
+		}
+	],
+	"workers_dev": true,
+	"preview_urls": false,
+	"observability": {
+		"enabled": true
+	}
 }
