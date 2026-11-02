@@ -1,4 +1,4 @@
-import type { ReelProps } from "./remotion/types";
+import type { ReelProps, SegmentKey } from "./remotion/types";
 
 export type ApiQuestion = {
   id: number;
@@ -44,8 +44,7 @@ export function toReelProps(q: ApiQuestion): ReelProps {
     ctaUrl: "nirnoy.app",
     music: true,
     sfx: true,
-    voiceUrl: null,
-    voiceSec: 0,
+    voice: {},
   };
 }
 
@@ -74,12 +73,34 @@ export const fetchReels = () => request<{ data: ReelLog[] }>("/api/reels").then(
 export const logReel = (questionId: number) =>
   request("/api/reels", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ question_id: questionId }) });
 
-/** Turns the question into speakable text: blanks become a pause, X/Y stay as letters. */
-export const voiceScript = (body: string) =>
-  body
+/** Turns on-screen text into speakable text: blanks become a pause. */
+const speakable = (text: string) =>
+  text
     .replace(/_{2,}|…{2,}|\.{4,}/g, " … ")
     .replace(/\s+/g, " ")
     .trim();
+
+export const SEGMENT_LABELS: Record<SegmentKey, string> = {
+  question: "১. প্রশ্ন",
+  options: "২. অপশন",
+  think: "৩. চিন্তা করুন",
+  answer: "৪. সঠিক উত্তর",
+  explanation: "৫. ব্যাখ্যা",
+  cta: "৬. শেষ কথা",
+};
+
+/** Default narration for each beat, built from what is on screen. Every line stays editable. */
+export function narrationScripts(p: ReelProps): Record<SegmentKey, string> {
+  const correct = p.options[p.correctIndex];
+  return {
+    question: speakable(p.body),
+    options: p.options.map((o) => `${o.label}, ${speakable(o.text)}।`).join(" "),
+    think: "এবার চিন্তা করুন। আপনার হাতে ছয় সেকেন্ড।",
+    answer: correct ? `সঠিক উত্তর, ${correct.label}, ${speakable(correct.text)}।` : "",
+    explanation: speakable(p.explanation),
+    cta: "আর্লি অ্যাক্সেস পেতে এখনই ভিজিট করুন, নির্ণয় ডট অ্যাপ।",
+  };
+}
 
 export const VOICES = [
   { id: "bn-BD-NabanitaNeural", label: "নবনীতা (মহিলা, বাংলাদেশ)" },

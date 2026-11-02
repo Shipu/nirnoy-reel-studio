@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   type RandomFilters,
   type ReelLog,
+  SEGMENT_LABELS,
   VOICES,
   audioDuration,
   fetchQuestion,
@@ -11,11 +12,15 @@ import {
   fetchReels,
   logReel,
   synthesize,
+  narrationScripts,
   toReelProps,
-  voiceScript,
 } from "./api";
 import { MCQReel } from "./remotion/MCQReel";
-import { FPS, HEIGHT, type ReelProps, WIDTH, durationInFrames } from "./remotion/types";
+import { FPS, HEIGHT, type ReelProps, SEGMENTS, type SegmentKey, WIDTH, durationInFrames, hasExplanation } from "./remotion/types";
+
+const revokeAll = (p: ReelProps | null) => {
+  for (const clip of Object.values(p?.voice ?? {})) if (clip) URL.revokeObjectURL(clip.url);
+};
 
 type Status = { kind: "idle" | "busy" | "error" | "ok"; text: string };
 
@@ -27,7 +32,7 @@ export function App() {
   const [progress, setProgress] = useState<number | null>(null);
   const [reels, setReels] = useState<ReelLog[]>([]);
   const abortRef = useRef<AbortController | null>(null);
-  const [voiceText, setVoiceText] = useState("");
+  const [scripts, setScripts] = useState<Record<SegmentKey, string> | null>(null);
   const [voice, setVoice] = useState<string>(VOICES[0].id);
   const [rate, setRate] = useState(-5);
   const [voiceBusy, setVoiceBusy] = useState(false);
@@ -43,10 +48,10 @@ export function App() {
       const q = await fn();
       const next = toReelProps(q);
       setProps((old) => {
-        if (old?.voiceUrl) URL.revokeObjectURL(old.voiceUrl);
+        revokeAll(old);
         return next;
       });
-      setVoiceText(voiceScript(next.body));
+      setScripts(narrationScripts(next));
       setIdInput(String(q.id));
       setStatus({ kind: "ok", text: `প্রশ্ন #${q.id} লোড হয়েছে। লেখা দেখে নিন, দরকার হলে ঠিক করুন।` });
     } catch (e) {
@@ -90,20 +95,33 @@ export function App() {
     }
   };
 
-  const attachVoice = async (blob: Blob, label: string) => {
+  const activeSegments = (p: ReelProps) => SEGMENTS.filter((k) => k !== "explanation" || hasExplanation(p));
+
+  const attachClip = async (key: SegmentKey, blob: Blob) => {
     const url = URL.createObjectURL(blob);
     const sec = await audioDuration(url);
     setProps((p) => {
-      if (p?.voiceUrl) URL.revokeObjectURL(p.voiceUrl);
-      return p ? { ...p, voiceUrl: url, voiceSec: sec } : p;
+      if (!p) return p;
+      const old = p.voice[key];
+      if (old) URL.revokeObjectURL(old.url);
+      return { ...p, voice: { ...p.voice, [key]: { url, sec } } };
     });
-    setStatus({ kind: "ok", text: `${label}: ${sec.toFixed(1)} সেকেন্ড। Preview চালিয়ে শুনে নিন।` });
+    return sec;
   };
 
-  const makeVoice = async () => {
+  const makeVoice = async (only?: SegmentKey) => {
+    if (!props || !scripts) return;
+    const keys = only ? [only] : activeSegments(props);
     setVoiceBusy(true);
     try {
-      await attachVoice(await synthesize(voiceText, voice, rate), "Voice-over তৈরি");
+      let total = 0;
+      for (const [i, key] of keys.entries()) {
+        const text = scripts[key].trim();
+        if (!text) continue;
+        setStatus({ kind: "busy", text: `Voice বানাচ্ছি (${i + 1}/${keys.length}): ${SEGMENT_LABELS[key]}` });
+        total += await attachClip(key, await synthesize(text, voice, rate));
+      }
+      setStatus({ kind: "ok", text: `Voice তৈরি (${total.toFixed(1)} সেকেন্ড কথা)। Preview চালিয়ে শুনে নিন।` });
     } catch (e) {
       setStatus({ kind: "error", text: (e as Error).message });
     } finally {
@@ -111,10 +129,16 @@ export function App() {
     }
   };
 
-  const removeVoice = () =>
+  const removeClip = (key?: SegmentKey) =>
     setProps((p) => {
-      if (p?.voiceUrl) URL.revokeObjectURL(p.voiceUrl);
-      return p ? { ...p, voiceUrl: null, voiceSec: 0 } : p;
+      if (!p) return p;
+      if (!key) {
+        revokeAll(p);
+        return { ...p, voice: {} };
+      }
+      const old = p.voice[key];
+      if (old) URL.revokeObjectURL(old.url);
+      return { ...p, voice: { ...p.voice, [key]: null } };
     });
 
   const set = <K extends keyof ReelProps>(key: K, value: ReelProps[K]) => setProps((p) => (p ? { ...p, [key]: value } : p));
@@ -194,11 +218,7 @@ export function App() {
               <input value={props.ctaLine} onChange={(e) => set("ctaLine", e.target.value)} />
             </label>
             <div className="voice">
-              <h2>Voice-over (প্রশ্ন পড়া)</h2>
-              <label>
-                যা পড়া হবে <small>{voiceText.length} অক্ষর</small>
-                <textarea rows={3} value={voiceText} onChange={(e) => setVoiceText(e.target.value)} />
-              </label>
+              <h2>Voice-over</h2>
               <div className="row">
                 <select value={voice} onChange={(e) => setVoice(e.target.value)}>
                   {VOICES.map((v) => (
@@ -213,29 +233,61 @@ export function App() {
                   <option value={5}>একটু দ্রুত</option>
                 </select>
               </div>
+              {scripts
+                ? activeSegments(props).map((key) => {
+                    const clip = props.voice[key];
+                    return (
+                      <div key={key} className="segment">
+                        <label>
+                          {SEGMENT_LABELS[key]} {clip ? <small>{clip.sec.toFixed(1)} সে.</small> : null}
+                          <textarea
+                            rows={key === "explanation" ? 4 : 2}
+                            value={scripts[key]}
+                            onChange={(e) => setScripts({ ...scripts, [key]: e.target.value })}
+                          />
+                        </label>
+                        <div className="row small">
+                          <button className="secondary" disabled={voiceBusy || !scripts[key].trim()} onClick={() => makeVoice(key)}>
+                            {clip ? "আবার" : "বানান"}
+                          </button>
+                          <label className="upload secondary">
+                            রেকর্ড
+                            <input
+                              type="file"
+                              accept="audio/*"
+                              onChange={(e) => {
+                                const f = e.target.files?.[0];
+                                if (f) attachClip(key, f).catch((err) => setStatus({ kind: "error", text: err.message }));
+                                e.target.value = "";
+                              }}
+                            />
+                          </label>
+                          {clip ? (
+                            <>
+                              <audio controls src={clip.url} />
+                              <button className="link" onClick={() => removeClip(key)}>
+                                বাদ
+                              </button>
+                            </>
+                          ) : null}
+                        </div>
+                      </div>
+                    );
+                  })
+                : null}
               <div className="row">
-                <button disabled={voiceBusy || !voiceText.trim()} onClick={makeVoice}>
-                  {voiceBusy ? "বানাচ্ছি…" : props.voiceUrl ? "আবার বানান" : "Voice বানান"}
+                <button disabled={voiceBusy} onClick={() => makeVoice()}>
+                  {voiceBusy ? "বানাচ্ছি…" : "সব voice বানান"}
                 </button>
-                <label className="upload secondary">
-                  নিজের রেকর্ড
-                  <input
-                    type="file"
-                    accept="audio/*"
-                    onChange={(e) => {
-                      const f = e.target.files?.[0];
-                      if (f) attachVoice(f, "রেকর্ড যোগ হয়েছে").catch((err) => setStatus({ kind: "error", text: err.message }));
-                      e.target.value = "";
-                    }}
-                  />
-                </label>
-                {props.voiceUrl ? (
-                  <button className="secondary" onClick={removeVoice}>
-                    বাদ দিন
-                  </button>
-                ) : null}
+                <button className="secondary" disabled={voiceBusy} onClick={() => setScripts(narrationScripts(props))} title="উপরের লেখা বদলালে narration আবার বানাতে">
+                  লেখা আবার সাজান
+                </button>
               </div>
-              {props.voiceUrl ? <audio controls src={props.voiceUrl} /> : null}
+              {Object.values(props.voice).some(Boolean) ? (
+                <button className="link" onClick={() => removeClip()}>
+                  সব voice বাদ দিন
+                </button>
+              ) : null}
             </div>
             <div className="row toggles">
               <label className="check">

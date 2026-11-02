@@ -41,7 +41,7 @@ Access ঠিক না থাকলে Worker সব `/api` request 401 দে�
 
 ## Bangla voice-over (Azure)
 
-Studio প্রশ্নটা বাংলায় পড়িয়ে নেয় Azure-এর neural voice দিয়ে (`bn-BD-NabanitaNeural` মহিলা, `bn-BD-PradeepNeural` পুরুষ)।
+Studio পুরো reel-এর narration (প্রশ্ন, অপশন, চিন্তা করুন, উত্তর, ব্যাখ্যা, শেষ কথা) বাংলায় বানায় Azure-এর neural voice দিয়ে (`bn-BD-NabanitaNeural` মহিলা, `bn-BD-PradeepNeural` পুরুষ)।
 একই লেখা আবার চাইলে Cloudflare cache থেকে আসে, Azure-এ আবার খরচ হয় না।
 
 1. Azure portal → Create resource → **Speech** → Pricing tier **Free F0**, region `southeastasia`।
@@ -54,4 +54,9 @@ Azure ছাড়াও studio-তে "নিজের রেকর্ড" দ�
 ## Template বদলানো
 
 `src/remotion/MCQReel.tsx`: রং ও লোগো `nirnoy.pen` থেকে নেওয়া। লেখা লম্বা হলে ফন্ট নিজে ছোট হয় (`fit()`),
-আর ব্যাখ্যার দৈর্ঘ্য অনুযায়ী video ৬–১৪ সেকেন্ড ব্যাখ্যা দেখায় (`timeline()`)।
+আর প্রতিটা ধাপের সময় `src/remotion/types.ts`-এর `timeline()` ঠিক করে:
+
+প্রশ্ন (voice) → অপশন আসে (voice পড়ে) → "এবার চিন্তা করুন" (voice) → ৬ সেকেন্ড countdown →
+সঠিক উত্তর (voice) → ব্যাখ্যা (থাকলে, voice) → শেষ পর্দা (voice: nirnoy.app)
+
+প্রতিটা ধাপ ততক্ষণ চলে যতক্ষণ তার voice; voice না থাকলে পড়ার আন্দাজি সময় নেয়।

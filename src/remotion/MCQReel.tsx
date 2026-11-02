@@ -12,7 +12,7 @@ import chimeUrl from "./sfx/chime.wav?url";
 import musicUrl from "./sfx/music.wav?url";
 import tickUrl from "./sfx/tick.wav?url";
 import whooshUrl from "./sfx/whoosh.wav?url";
-import { type ReelProps, VOICE_START, fit, timeline } from "./types";
+import { type ReelProps, SEGMENTS, THINK_SECONDS, fit, timeline } from "./types";
 
 // ---- Brand tokens (from nirnoy.pen, "mn-" set) ----
 const C = {
@@ -79,11 +79,18 @@ export const MCQReel: React.FC<ReelProps> = (p) => {
   const { fps } = useVideoConfig();
   const s = (sec: number) => sec * fps;
   const T = timeline(p);
-  const voiceOn = Boolean(p.voiceUrl) && p.voiceSec > 0;
+  // Options leave when the explanation arrives; with no explanation they stay until the CTA covers them.
+  const optionsOut = T.explain ?? T.cta;
+  const clips = SEGMENTS.flatMap((key) => {
+    const clip = p.voice[key];
+    const at = T.voiceAt[key];
+    return clip && clip.sec > 0 && at !== null ? [{ key, url: clip.url, from: at, to: at + clip.sec }] : [];
+  });
+  const underVoice = (f: number) => clips.some((c) => f >= s(c.from - 0.15) && f < s(c.to + 0.15));
 
   const revealP = interpolate(frame, [s(T.reveal), s(T.reveal + 0.5)], [0, 1], { ...clamp, easing: ease });
   const revealed = revealP > 0.5;
-  const explainP = interpolate(frame, [s(T.explain), s(T.explain + 0.6)], [0, 1], { ...clamp, easing: ease });
+  const explainP = T.explain === null ? 0 : interpolate(frame, [s(T.explain), s(T.explain + 0.6)], [0, 1], { ...clamp, easing: ease });
   const ctaP = interpolate(frame, [s(T.cta), s(T.cta + 0.6)], [0, 1], { ...clamp, easing: ease });
   const thinkP = interpolate(frame, [s(T.thinkStart), s(T.thinkEnd)], [0, 1], clamp);
   const secondsLeft = Math.max(0, Math.ceil(T.thinkEnd - frame / fps));
@@ -102,35 +109,37 @@ export const MCQReel: React.FC<ReelProps> = (p) => {
           src={musicUrl}
           loop
           volume={(f) =>
-            // Mild bed: quiet overall, dipped further under the voice-over and the reveal chime.
-            0.32 *
+            // Mild bed: quiet overall, dipped further under narration and the reveal chime.
+            0.3 *
             interpolate(f, [0, s(0.8)], [0, 1], clamp) *
             interpolate(f, [s(T.end - 1.2), s(T.end)], [1, 0], clamp) *
-            (voiceOn && f >= s(VOICE_START - 0.2) && f < s(VOICE_START + p.voiceSec + 0.2) ? 0.35 : 1) *
+            (underVoice(f) ? 0.3 : 1) *
             (f >= s(T.reveal) && f < s(T.reveal + 1.2) ? 0.6 : 1)
           }
         />
       ) : null}
-      {voiceOn ? (
-        <Sequence from={Math.round(s(VOICE_START))} durationInFrames={Math.ceil(s(p.voiceSec + 0.2))} layout="none">
-          <Audio src={p.voiceUrl as string} volume={1} />
+      {clips.map((c) => (
+        <Sequence key={c.key} from={Math.round(s(c.from))} durationInFrames={Math.ceil(s(c.to - c.from + 0.2))} layout="none">
+          <Audio src={c.url} volume={1} />
         </Sequence>
-      ) : null}
+      ))}
       {p.sfx ? (
         <>
-          {Array.from({ length: Math.round(T.thinkEnd - T.thinkStart) }, (_, i) => (
+          {Array.from({ length: THINK_SECONDS }, (_, i) => (
             <Sequence key={i} from={Math.round(s(T.thinkStart + i))} durationInFrames={Math.round(s(0.3))} layout="none">
-              <Audio src={tickUrl} volume={i >= Math.round(T.thinkEnd - T.thinkStart) - 2 ? 0.9 : 0.6} />
+              <Audio src={tickUrl} volume={i >= THINK_SECONDS - 2 ? 0.9 : 0.6} />
             </Sequence>
           ))}
           <Sequence from={Math.round(s(T.reveal))} durationInFrames={Math.round(s(1.6))} layout="none">
-            <Audio src={chimeUrl} volume={0.7} />
+            <Audio src={chimeUrl} volume={0.55} />
           </Sequence>
-          <Sequence from={Math.round(s(T.explain - 0.25))} durationInFrames={Math.round(s(0.7))} layout="none">
-            <Audio src={whooshUrl} volume={0.7} />
-          </Sequence>
+          {T.explain !== null ? (
+            <Sequence from={Math.round(s(T.explain - 0.25))} durationInFrames={Math.round(s(0.7))} layout="none">
+              <Audio src={whooshUrl} volume={0.6} />
+            </Sequence>
+          ) : null}
           <Sequence from={Math.round(s(T.cta - 0.25))} durationInFrames={Math.round(s(0.7))} layout="none">
-            <Audio src={whooshUrl} volume={0.8} />
+            <Audio src={whooshUrl} volume={0.7} />
           </Sequence>
         </>
       ) : null}
@@ -180,13 +189,13 @@ export const MCQReel: React.FC<ReelProps> = (p) => {
               display: "flex",
               flexDirection: "column",
               gap: 22,
-              opacity: interpolate(frame, [s(T.explain), s(T.explain + 0.5)], [1, 0], clamp),
+              opacity: interpolate(frame, [s(optionsOut), s(optionsOut + 0.5)], [1, 0], clamp),
             }}
           >
             {p.options.map((o, i) => {
               const isCorrect = i === p.correctIndex;
               const on = isCorrect && revealed;
-              const appear = interpolate(frame, [s(0.7 + i * 0.12), s(1.2 + i * 0.12)], [0, 1], { ...clamp, easing: ease });
+              const appear = interpolate(frame, [s(T.optionsIn + i * 0.12), s(T.optionsIn + 0.5 + i * 0.12)], [0, 1], { ...clamp, easing: ease });
               return (
                 <div
                   key={i}
