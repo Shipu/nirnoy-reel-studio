@@ -52,6 +52,10 @@ Studio পুরো reel-এর narration (প্রশ্ন, অপশন, চ
 - Key: ElevenLabs → Settings → API Keys → নতুন key (শুধু Text to Speech permission দিলেই যথেষ্ট), তারপর
   `npx wrangler secret put ELEVENLABS_API_KEY`
 - **Free plan-এ commercial license নেই** — test-এর জন্য ঠিক আছে, reel post করার আগে paid plan লাগবে।
+- **Free plan-এ API দিয়ে Voice Library-র কণ্ঠ (Syed, Rakib…) চলে না (402)।** Free plan-এ চলে premade কণ্ঠ
+  (Daniel, Brian — বিদেশি উচ্চারণ) আর নিজের Voice Design করা কণ্ঠ।
+- কণ্ঠের তালিকা বদলাতে `wrangler.jsonc`-এর `vars`-এ দিন:
+  `"ELEVENLABS_VOICES": "[{\"id\":\"<voice id>\",\"label\":\"আমার কণ্ঠ\"}]"`
 - `eleven_v3`-এ speed setting নেই; "ধীর" বাছলে লেখার শুরুতে `[slowly]` tag যায়।
 
 ElevenLabs ছাড়াও studio-তে প্রতিটা ধাপে "রেকর্ড" দিয়ে নিজের audio দেওয়া যায়।
