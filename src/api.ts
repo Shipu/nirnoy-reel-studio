@@ -102,10 +102,9 @@ export function narrationScripts(p: ReelProps): Record<SegmentKey, string> {
   };
 }
 
-export const VOICES = [
-  { id: "bn-BD-NabanitaNeural", label: "নবনীতা (মহিলা, বাংলাদেশ)" },
-  { id: "bn-BD-PradeepNeural", label: "প্রদীপ (পুরুষ, বাংলাদেশ)" },
-] as const;
+export type TtsVoice = { id: string; label: string };
+
+export const fetchVoices = () => request<{ provider: string; voices: TtsVoice[] }>("/api/tts/voices");
 
 export async function synthesize(text: string, voice: string, rate: number): Promise<Blob> {
   const res = await fetch("/api/tts", {

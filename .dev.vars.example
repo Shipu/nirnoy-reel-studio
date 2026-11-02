@@ -1,6 +1,8 @@
 # Local-only secrets for `wrangler dev`. Copy to .dev.vars (never commit it).
 REEL_API_KEY=paste-the-same-key-as-laravel-REEL_API_KEY
-# Azure Speech key for the Bangla voice-over (optional locally).
+# Bangla narration (TTS_PROVIDER=elevenlabs, the default).
+ELEVENLABS_API_KEY=
+# Only if TTS_PROVIDER=azure.
 AZURE_SPEECH_KEY=
 # Skip the Cloudflare Access check when running locally only.
 ALLOW_NO_ACCESS=true

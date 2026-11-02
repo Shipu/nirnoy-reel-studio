@@ -39,17 +39,27 @@ npm run deploy
 Application-এর **AUD tag** আর team domain `wrangler.jsonc`-এর `ACCESS_AUD` / `ACCESS_TEAM_DOMAIN`-এ বসিয়ে আবার `npm run deploy`।
 Access ঠিক না থাকলে Worker সব `/api` request 401 দেয় (fail closed)।
 
-## Bangla voice-over (Azure)
+## Bangla voice-over
 
-Studio পুরো reel-এর narration (প্রশ্ন, অপশন, চিন্তা করুন, উত্তর, ব্যাখ্যা, শেষ কথা) বাংলায় বানায় Azure-এর neural voice দিয়ে (`bn-BD-NabanitaNeural` মহিলা, `bn-BD-PradeepNeural` পুরুষ)।
-একই লেখা আবার চাইলে Cloudflare cache থেকে আসে, Azure-এ আবার খরচ হয় না।
+Studio পুরো reel-এর narration (প্রশ্ন, অপশন, চিন্তা করুন, উত্তর, ব্যাখ্যা, শেষ কথা) বাংলায় বানায়।
+একই লেখা + কণ্ঠ + model আবার চাইলে Cloudflare cache থেকে আসে, নতুন credit খরচ হয় না।
 
-1. Azure portal → Create resource → **Speech** → Pricing tier **Free F0**, region `southeastasia`।
-2. Keys and Endpoint থেকে **KEY 1** নিন:
-   `npx wrangler secret put AZURE_SPEECH_KEY`
-3. Region আলাদা হলে `wrangler.jsonc`-এ `AZURE_SPEECH_REGION` বদলান।
+### ElevenLabs (default, `TTS_PROVIDER=elevenlabs`)
 
-Azure ছাড়াও studio-তে "নিজের রেকর্ড" দিয়ে যেকোনো audio ফাইল দেওয়া যায়।
+- Model: **`eleven_v3`** — ElevenLabs-এ বাংলা শুধু এই model-এ (`ELEVENLABS_MODEL` var দিয়ে বদলানো যায়)।
+- কণ্ঠ: `worker/index.ts`-এর `ELEVENLABS_VOICES` (Syed, Rakib, Rayhan, Swati S — Voice Library-র বাংলা কণ্ঠ)।
+  প্রতিটা কণ্ঠ আগে ElevenLabs-এ Voice Library → **Add to My Voices** করে নিন, না হলে 404 আসবে।
+- Key: ElevenLabs → Settings → API Keys → নতুন key (শুধু Text to Speech permission দিলেই যথেষ্ট), তারপর
+  `npx wrangler secret put ELEVENLABS_API_KEY`
+- **Free plan-এ commercial license নেই** — test-এর জন্য ঠিক আছে, reel post করার আগে paid plan লাগবে।
+- `eleven_v3`-এ speed setting নেই; "ধীর" বাছলে লেখার শুরুতে `[slowly]` tag যায়।
+
+### Azure (`TTS_PROVIDER=azure`)
+
+`bn-BD-NabanitaNeural` / `bn-BD-PradeepNeural`। Azure portal → Speech (Free F0) → `npx wrangler secret put AZURE_SPEECH_KEY`,
+আর `wrangler.jsonc`-এ `AZURE_SPEECH_REGION`।
+
+যেকোনো provider ছাড়াও studio-তে প্রতিটা ধাপে "রেকর্ড" দিয়ে নিজের audio দেওয়া যায়।
 
 ## Template বদলানো
 

@@ -5,11 +5,12 @@ import {
   type RandomFilters,
   type ReelLog,
   SEGMENT_LABELS,
-  VOICES,
+  type TtsVoice,
   audioDuration,
   fetchQuestion,
   fetchRandom,
   fetchReels,
+  fetchVoices,
   logReel,
   synthesize,
   narrationScripts,
@@ -33,13 +34,20 @@ export function App() {
   const [reels, setReels] = useState<ReelLog[]>([]);
   const abortRef = useRef<AbortController | null>(null);
   const [scripts, setScripts] = useState<Record<SegmentKey, string> | null>(null);
-  const [voice, setVoice] = useState<string>(VOICES[0].id);
+  const [voices, setVoices] = useState<TtsVoice[]>([]);
+  const [voice, setVoice] = useState<string>("");
   const [rate, setRate] = useState(-5);
   const [voiceBusy, setVoiceBusy] = useState(false);
 
   const refreshReels = () => fetchReels().then(setReels).catch(() => undefined);
   useEffect(() => {
     refreshReels();
+    fetchVoices()
+      .then((r) => {
+        setVoices(r.voices);
+        setVoice((v) => v || r.voices[0]?.id || "");
+      })
+      .catch(() => undefined);
   }, []);
 
   const load = async (fn: () => Promise<Parameters<typeof toReelProps>[0]>) => {
@@ -221,7 +229,7 @@ export function App() {
               <h2>Voice-over</h2>
               <div className="row">
                 <select value={voice} onChange={(e) => setVoice(e.target.value)}>
-                  {VOICES.map((v) => (
+                  {voices.map((v) => (
                     <option key={v.id} value={v.id}>
                       {v.label}
                     </option>
