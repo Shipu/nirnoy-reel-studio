@@ -1,0 +1,32 @@
+{
+  "name": "nirnoy-reel-studio",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "dev:worker": "npm run build && wrangler dev",
+    "deploy": "npm run build && wrangler deploy",
+    "db:migrate:local": "wrangler d1 migrations apply nirnoy-reel-studio --local",
+    "db:migrate:remote": "wrangler d1 migrations apply nirnoy-reel-studio --remote",
+    "typecheck": "tsc -b"
+  },
+  "dependencies": {
+    "@fontsource/noto-serif-bengali": "5.2.6",
+    "@remotion/player": "4.0.539",
+    "@remotion/web-renderer": "4.0.539",
+    "react": "19.1.0",
+    "react-dom": "19.1.0",
+    "remotion": "4.0.539"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "4.20251014.0",
+    "@types/react": "19.1.8",
+    "@types/react-dom": "19.1.6",
+    "@vitejs/plugin-react": "5.0.4",
+    "jose": "6.1.0",
+    "typescript": "5.9.3",
+    "vite": "7.1.12",
+    "wrangler": "4.45.0"
+  }
+}

@@ -1,0 +1,4 @@
+# Local-only secrets for `npm run dev:worker`. Copy to .dev.vars (never commit it).
+REEL_API_KEY=paste-the-same-key-as-laravel-REEL_API_KEY
+# Skip the Cloudflare Access check when running locally only.
+ALLOW_NO_ACCESS=true
