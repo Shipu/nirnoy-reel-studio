@@ -9,6 +9,10 @@ export type ReelProps = {
   explanation: string;
   ctaLine: string;
   ctaUrl: string;
+  /** Background music bed. */
+  music: boolean;
+  /** Tick / chime / whoosh effects. */
+  sfx: boolean;
 };
 
 export const FPS = 30;

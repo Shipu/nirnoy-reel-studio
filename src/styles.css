@@ -56,3 +56,4 @@ progress { width: 220px; }
   .panel { max-height: none; border-right: 0; }
   .player { height: auto; width: 100%; max-width: 420px; }
 }
+.toggles { gap: 20px; }

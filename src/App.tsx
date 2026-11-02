@@ -47,6 +47,7 @@ export function App() {
         inputProps: props,
         container: "mp4",
         videoBitrate: "high",
+        audioBitrate: "high",
         signal: controller.signal,
         onProgress: (p) => setProgress(p.progress),
       });
@@ -144,6 +145,16 @@ export function App() {
               শেষ পর্দার লাইন
               <input value={props.ctaLine} onChange={(e) => set("ctaLine", e.target.value)} />
             </label>
+            <div className="row toggles">
+              <label className="check">
+                <input type="checkbox" checked={props.music} onChange={(e) => set("music", e.target.checked)} />
+                Background music
+              </label>
+              <label className="check">
+                <input type="checkbox" checked={props.sfx} onChange={(e) => set("sfx", e.target.checked)} />
+                Sound effect
+              </label>
+            </div>
             <label>
               বোতামের লেখা
               <input value={props.ctaUrl} onChange={(e) => set("ctaUrl", e.target.value)} />

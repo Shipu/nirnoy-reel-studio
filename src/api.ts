@@ -42,6 +42,8 @@ export function toReelProps(q: ApiQuestion): ReelProps {
     explanation: stripAnswerLine(plain(q.explanation)),
     ctaLine: "Early access পেতে এখনই join করুন",
     ctaUrl: "nirnoy.app",
+    music: true,
+    sfx: true,
   };
 }
 

@@ -6,7 +6,12 @@ import "@fontsource/noto-serif-bengali/latin-400.css";
 import "@fontsource/noto-serif-bengali/latin-600.css";
 import "@fontsource/noto-serif-bengali/latin-700.css";
 import React, { useEffect, useState } from "react";
-import { AbsoluteFill, Easing, continueRender, delayRender, interpolate, useCurrentFrame, useVideoConfig } from "remotion";
+import { Audio } from "@remotion/media";
+import { AbsoluteFill, Easing, Sequence, continueRender, delayRender, interpolate, useCurrentFrame, useVideoConfig } from "remotion";
+import chimeUrl from "./sfx/chime.wav?url";
+import musicUrl from "./sfx/music.wav?url";
+import tickUrl from "./sfx/tick.wav?url";
+import whooshUrl from "./sfx/whoosh.wav?url";
 import { type ReelProps, fit, timeline } from "./types";
 
 // ---- Brand tokens (from nirnoy.pen, "mn-" set) ----
@@ -91,6 +96,35 @@ export const MCQReel: React.FC<ReelProps> = (p) => {
 
   return (
     <AbsoluteFill style={{ backgroundColor: C.canvas, fontFamily: FONT, color: C.ink }}>
+      {p.music ? (
+        <Audio
+          src={musicUrl}
+          volume={(f) =>
+            0.6 *
+            interpolate(f, [0, s(0.8)], [0, 1], clamp) *
+            interpolate(f, [s(T.end - 1.2), s(T.end)], [1, 0], clamp) *
+            (f >= s(T.reveal) && f < s(T.reveal + 1.2) ? 0.6 : 1)
+          }
+        />
+      ) : null}
+      {p.sfx ? (
+        <>
+          {Array.from({ length: Math.round(T.thinkEnd - T.thinkStart) }, (_, i) => (
+            <Sequence key={i} from={Math.round(s(T.thinkStart + i))} durationInFrames={Math.round(s(0.3))} layout="none">
+              <Audio src={tickUrl} volume={i >= Math.round(T.thinkEnd - T.thinkStart) - 2 ? 0.9 : 0.6} />
+            </Sequence>
+          ))}
+          <Sequence from={Math.round(s(T.reveal))} durationInFrames={Math.round(s(1.6))} layout="none">
+            <Audio src={chimeUrl} volume={0.7} />
+          </Sequence>
+          <Sequence from={Math.round(s(T.explain - 0.25))} durationInFrames={Math.round(s(0.7))} layout="none">
+            <Audio src={whooshUrl} volume={0.7} />
+          </Sequence>
+          <Sequence from={Math.round(s(T.cta - 0.25))} durationInFrames={Math.round(s(0.7))} layout="none">
+            <Audio src={whooshUrl} volume={0.8} />
+          </Sequence>
+        </>
+      ) : null}
       <div
         style={{
           position: "absolute",
@@ -106,9 +140,10 @@ export const MCQReel: React.FC<ReelProps> = (p) => {
         <div style={{ backgroundColor: C.accentSoft, color: C.accentInk, fontSize: 32, fontWeight: 600, borderRadius: 999, padding: "10px 28px" }}>
           আজকের MCQ
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-          <LogoMark size={64} />
-          <div style={{ fontSize: 46, fontWeight: 700, color: C.wordmark }}>নির্ণয়</div>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, height: 64 }}>
+          <LogoMark size={58} />
+          {/* Noto Serif Bengali sits high in its line box; lineHeight 1 + a small nudge centres the matra-to-baseline body on the mark. */}
+          <div style={{ fontSize: 46, lineHeight: 1, fontWeight: 700, color: C.wordmark, translate: "0px 5px" }}>নির্ণয়</div>
         </div>
       </div>
 
