@@ -1,4 +1,6 @@
-# Local-only secrets for `npm run dev:worker`. Copy to .dev.vars (never commit it).
+# Local-only secrets for `wrangler dev`. Copy to .dev.vars (never commit it).
 REEL_API_KEY=paste-the-same-key-as-laravel-REEL_API_KEY
+# Azure Speech key for the Bangla voice-over (optional locally).
+AZURE_SPEECH_KEY=
 # Skip the Cloudflare Access check when running locally only.
 ALLOW_NO_ACCESS=true

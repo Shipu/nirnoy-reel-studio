@@ -44,6 +44,8 @@ export function toReelProps(q: ApiQuestion): ReelProps {
     ctaUrl: "nirnoy.app",
     music: true,
     sfx: true,
+    voiceUrl: null,
+    voiceSec: 0,
   };
 }
 
@@ -71,3 +73,38 @@ export const fetchReels = () => request<{ data: ReelLog[] }>("/api/reels").then(
 
 export const logReel = (questionId: number) =>
   request("/api/reels", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ question_id: questionId }) });
+
+/** Turns the question into speakable text: blanks become a pause, X/Y stay as letters. */
+export const voiceScript = (body: string) =>
+  body
+    .replace(/_{2,}|…{2,}|\.{4,}/g, " … ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+export const VOICES = [
+  { id: "bn-BD-NabanitaNeural", label: "নবনীতা (মহিলা, বাংলাদেশ)" },
+  { id: "bn-BD-PradeepNeural", label: "প্রদীপ (পুরুষ, বাংলাদেশ)" },
+] as const;
+
+export async function synthesize(text: string, voice: string, rate: number): Promise<Blob> {
+  const res = await fetch("/api/tts", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ text, voice, rate }),
+  });
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as { message?: string };
+    throw new Error(data.message ?? `Voice-over failed (${res.status})`);
+  }
+  return res.blob();
+}
+
+/** Measures an audio file's length in seconds. */
+export const audioDuration = (url: string) =>
+  new Promise<number>((resolve, reject) => {
+    const el = new Audio();
+    el.preload = "metadata";
+    el.onloadedmetadata = () => resolve(el.duration);
+    el.onerror = () => reject(new Error("Audio file could not be read."));
+    el.src = url;
+  });

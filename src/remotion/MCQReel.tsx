@@ -12,7 +12,7 @@ import chimeUrl from "./sfx/chime.wav?url";
 import musicUrl from "./sfx/music.wav?url";
 import tickUrl from "./sfx/tick.wav?url";
 import whooshUrl from "./sfx/whoosh.wav?url";
-import { type ReelProps, fit, timeline } from "./types";
+import { type ReelProps, VOICE_START, fit, timeline } from "./types";
 
 // ---- Brand tokens (from nirnoy.pen, "mn-" set) ----
 const C = {
@@ -79,6 +79,7 @@ export const MCQReel: React.FC<ReelProps> = (p) => {
   const { fps } = useVideoConfig();
   const s = (sec: number) => sec * fps;
   const T = timeline(p);
+  const voiceOn = Boolean(p.voiceUrl) && p.voiceSec > 0;
 
   const revealP = interpolate(frame, [s(T.reveal), s(T.reveal + 0.5)], [0, 1], { ...clamp, easing: ease });
   const revealed = revealP > 0.5;
@@ -99,13 +100,21 @@ export const MCQReel: React.FC<ReelProps> = (p) => {
       {p.music ? (
         <Audio
           src={musicUrl}
+          loop
           volume={(f) =>
-            0.6 *
+            // Mild bed: quiet overall, dipped further under the voice-over and the reveal chime.
+            0.32 *
             interpolate(f, [0, s(0.8)], [0, 1], clamp) *
             interpolate(f, [s(T.end - 1.2), s(T.end)], [1, 0], clamp) *
+            (voiceOn && f >= s(VOICE_START - 0.2) && f < s(VOICE_START + p.voiceSec + 0.2) ? 0.35 : 1) *
             (f >= s(T.reveal) && f < s(T.reveal + 1.2) ? 0.6 : 1)
           }
         />
+      ) : null}
+      {voiceOn ? (
+        <Sequence from={Math.round(s(VOICE_START))} durationInFrames={Math.ceil(s(p.voiceSec + 0.2))} layout="none">
+          <Audio src={p.voiceUrl as string} volume={1} />
+        </Sequence>
       ) : null}
       {p.sfx ? (
         <>

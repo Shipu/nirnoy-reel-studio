@@ -39,6 +39,18 @@ npm run deploy
 Application-এর **AUD tag** আর team domain `wrangler.jsonc`-এর `ACCESS_AUD` / `ACCESS_TEAM_DOMAIN`-এ বসিয়ে আবার `npm run deploy`।
 Access ঠিক না থাকলে Worker সব `/api` request 401 দেয় (fail closed)।
 
+## Bangla voice-over (Azure)
+
+Studio প্রশ্নটা বাংলায় পড়িয়ে নেয় Azure-এর neural voice দিয়ে (`bn-BD-NabanitaNeural` মহিলা, `bn-BD-PradeepNeural` পুরুষ)।
+একই লেখা আবার চাইলে Cloudflare cache থেকে আসে, Azure-এ আবার খরচ হয় না।
+
+1. Azure portal → Create resource → **Speech** → Pricing tier **Free F0**, region `southeastasia`।
+2. Keys and Endpoint থেকে **KEY 1** নিন:
+   `npx wrangler secret put AZURE_SPEECH_KEY`
+3. Region আলাদা হলে `wrangler.jsonc`-এ `AZURE_SPEECH_REGION` বদলান।
+
+Azure ছাড়াও studio-তে "নিজের রেকর্ড" দিয়ে যেকোনো audio ফাইল দেওয়া যায়।
+
 ## Template বদলানো
 
 `src/remotion/MCQReel.tsx`: রং ও লোগো `nirnoy.pen` থেকে নেওয়া। লেখা লম্বা হলে ফন্ট নিজে ছোট হয় (`fit()`),

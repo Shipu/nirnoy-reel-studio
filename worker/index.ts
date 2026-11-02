@@ -8,6 +8,62 @@ export interface Env {
   ACCESS_TEAM_DOMAIN?: string;
   ACCESS_AUD?: string;
   ALLOW_NO_ACCESS?: string;
+  /** Azure Speech resource key (secret) and region, e.g. "southeastasia". */
+  AZURE_SPEECH_KEY?: string;
+  AZURE_SPEECH_REGION?: string;
+  /** Test-only override of the Azure TTS URL. */
+  AZURE_TTS_ENDPOINT?: string;
+}
+
+const VOICES = new Set(["bn-BD-NabanitaNeural", "bn-BD-PradeepNeural", "bn-IN-TanishaaNeural", "bn-IN-BashkarNeural"]);
+
+const escapeXml = (t: string) =>
+  t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
+
+/**
+ * Bangla voice-over through Azure neural TTS. Same text + voice + speed is
+ * served from the edge cache, so re-opening a question costs nothing.
+ */
+async function tts(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+  const body = (await request.json().catch(() => null)) as { text?: unknown; voice?: unknown; rate?: unknown } | null;
+  const text = typeof body?.text === "string" ? body.text.trim() : "";
+  const voice = typeof body?.voice === "string" && VOICES.has(body.voice) ? body.voice : "bn-BD-NabanitaNeural";
+  const rate = Math.max(-30, Math.min(30, Math.round(Number(body?.rate ?? 0)) || 0));
+  if (!text || text.length > 1500) return json({ message: "text must be 1–1500 characters." }, 422);
+  if (!env.AZURE_SPEECH_KEY || (!env.AZURE_SPEECH_REGION && !env.AZURE_TTS_ENDPOINT)) {
+    return json({ message: "Voice-over is not configured: set AZURE_SPEECH_KEY (secret) and AZURE_SPEECH_REGION." }, 500);
+  }
+
+  const lang = voice.slice(0, 5);
+  const ssml =
+    `<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="${lang}">` +
+    `<voice name="${voice}"><prosody rate="${rate}%">${escapeXml(text)}</prosody></voice></speak>`;
+
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(ssml));
+  const key = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  const cacheKey = new Request(`https://tts-cache.nirnoy.internal/${key}.mp3`);
+  const cache = caches.default;
+  const hit = await cache.match(cacheKey);
+  if (hit) return hit;
+
+  const endpoint = env.AZURE_TTS_ENDPOINT ?? `https://${env.AZURE_SPEECH_REGION}.tts.speech.microsoft.com/cognitiveservices/v1`;
+  const res = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "Ocp-Apim-Subscription-Key": env.AZURE_SPEECH_KEY,
+      "Content-Type": "application/ssml+xml",
+      "X-Microsoft-OutputFormat": "audio-24khz-96kbitrate-mono-mp3",
+      "User-Agent": "nirnoy-reel-studio",
+    },
+    body: ssml,
+  });
+  if (!res.ok) return json({ message: `Azure TTS failed (${res.status}): ${(await res.text()).slice(0, 200)}` }, 502);
+
+  const out = new Response(await res.arrayBuffer(), {
+    headers: { "content-type": "audio/mpeg", "cache-control": "public, max-age=2592000" },
+  });
+  ctx.waitUntil(cache.put(cacheKey, out.clone()));
+  return out;
 }
 
 const json = (body: unknown, status = 200) =>
@@ -62,7 +118,7 @@ async function upstream(env: Env, path: string, params?: URLSearchParams): Promi
 const FORWARDED = ["exam_name", "year", "topic_id", "include_subtopics", "require_explanation"] as const;
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
 
     if (!url.pathname.startsWith("/api/")) return env.ASSETS.fetch(request);
@@ -71,6 +127,8 @@ export default {
     if (!user) return json({ message: "Unauthorized. Sign in through Cloudflare Access." }, 401);
 
     if (request.method === "GET" && url.pathname === "/api/me") return json({ email: user });
+
+    if (request.method === "POST" && url.pathname === "/api/tts") return tts(request, env, ctx);
 
     if (request.method === "GET" && url.pathname === "/api/questions/random") {
       const params = new URLSearchParams();

@@ -16,7 +16,9 @@
 		"NIRNOY_API_BASE": "https://stage-backend.nirnoy.app",
 		// From Cloudflare Zero Trust → Access → your application.
 		"ACCESS_TEAM_DOMAIN": "https://nirnoy.cloudflareaccess.com",
-		"ACCESS_AUD": "8c05842b64466f4bbddc794e6567148e81922d948fae118b660935871f4e8a8b"
+		"ACCESS_AUD": "8c05842b64466f4bbddc794e6567148e81922d948fae118b660935871f4e8a8b",
+		// Azure Speech region for the Bangla voice-over (key is the AZURE_SPEECH_KEY secret).
+		"AZURE_SPEECH_REGION": "southeastasia"
 	},
 	"d1_databases": [
 		{

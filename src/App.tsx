@@ -1,7 +1,19 @@
 import { Player } from "@remotion/player";
 import { renderMediaOnWeb } from "@remotion/web-renderer";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { type RandomFilters, type ReelLog, fetchQuestion, fetchRandom, fetchReels, logReel, toReelProps } from "./api";
+import {
+  type RandomFilters,
+  type ReelLog,
+  VOICES,
+  audioDuration,
+  fetchQuestion,
+  fetchRandom,
+  fetchReels,
+  logReel,
+  synthesize,
+  toReelProps,
+  voiceScript,
+} from "./api";
 import { MCQReel } from "./remotion/MCQReel";
 import { FPS, HEIGHT, type ReelProps, WIDTH, durationInFrames } from "./remotion/types";
 
@@ -15,6 +27,10 @@ export function App() {
   const [progress, setProgress] = useState<number | null>(null);
   const [reels, setReels] = useState<ReelLog[]>([]);
   const abortRef = useRef<AbortController | null>(null);
+  const [voiceText, setVoiceText] = useState("");
+  const [voice, setVoice] = useState<string>(VOICES[0].id);
+  const [rate, setRate] = useState(-5);
+  const [voiceBusy, setVoiceBusy] = useState(false);
 
   const refreshReels = () => fetchReels().then(setReels).catch(() => undefined);
   useEffect(() => {
@@ -25,7 +41,12 @@ export function App() {
     setStatus({ kind: "busy", text: "প্রশ্ন আনছি…" });
     try {
       const q = await fn();
-      setProps(toReelProps(q));
+      const next = toReelProps(q);
+      setProps((old) => {
+        if (old?.voiceUrl) URL.revokeObjectURL(old.voiceUrl);
+        return next;
+      });
+      setVoiceText(voiceScript(next.body));
       setIdInput(String(q.id));
       setStatus({ kind: "ok", text: `প্রশ্ন #${q.id} লোড হয়েছে। লেখা দেখে নিন, দরকার হলে ঠিক করুন।` });
     } catch (e) {
@@ -68,6 +89,33 @@ export function App() {
       abortRef.current = null;
     }
   };
+
+  const attachVoice = async (blob: Blob, label: string) => {
+    const url = URL.createObjectURL(blob);
+    const sec = await audioDuration(url);
+    setProps((p) => {
+      if (p?.voiceUrl) URL.revokeObjectURL(p.voiceUrl);
+      return p ? { ...p, voiceUrl: url, voiceSec: sec } : p;
+    });
+    setStatus({ kind: "ok", text: `${label}: ${sec.toFixed(1)} সেকেন্ড। Preview চালিয়ে শুনে নিন।` });
+  };
+
+  const makeVoice = async () => {
+    setVoiceBusy(true);
+    try {
+      await attachVoice(await synthesize(voiceText, voice, rate), "Voice-over তৈরি");
+    } catch (e) {
+      setStatus({ kind: "error", text: (e as Error).message });
+    } finally {
+      setVoiceBusy(false);
+    }
+  };
+
+  const removeVoice = () =>
+    setProps((p) => {
+      if (p?.voiceUrl) URL.revokeObjectURL(p.voiceUrl);
+      return p ? { ...p, voiceUrl: null, voiceSec: 0 } : p;
+    });
 
   const set = <K extends keyof ReelProps>(key: K, value: ReelProps[K]) => setProps((p) => (p ? { ...p, [key]: value } : p));
   const busy = status.kind === "busy";
@@ -145,6 +193,50 @@ export function App() {
               শেষ পর্দার লাইন
               <input value={props.ctaLine} onChange={(e) => set("ctaLine", e.target.value)} />
             </label>
+            <div className="voice">
+              <h2>Voice-over (প্রশ্ন পড়া)</h2>
+              <label>
+                যা পড়া হবে <small>{voiceText.length} অক্ষর</small>
+                <textarea rows={3} value={voiceText} onChange={(e) => setVoiceText(e.target.value)} />
+              </label>
+              <div className="row">
+                <select value={voice} onChange={(e) => setVoice(e.target.value)}>
+                  {VOICES.map((v) => (
+                    <option key={v.id} value={v.id}>
+                      {v.label}
+                    </option>
+                  ))}
+                </select>
+                <select value={rate} onChange={(e) => setRate(Number(e.target.value))} title="গতি">
+                  <option value={-15}>ধীর</option>
+                  <option value={-5}>স্বাভাবিক</option>
+                  <option value={5}>একটু দ্রুত</option>
+                </select>
+              </div>
+              <div className="row">
+                <button disabled={voiceBusy || !voiceText.trim()} onClick={makeVoice}>
+                  {voiceBusy ? "বানাচ্ছি…" : props.voiceUrl ? "আবার বানান" : "Voice বানান"}
+                </button>
+                <label className="upload secondary">
+                  নিজের রেকর্ড
+                  <input
+                    type="file"
+                    accept="audio/*"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) attachVoice(f, "রেকর্ড যোগ হয়েছে").catch((err) => setStatus({ kind: "error", text: err.message }));
+                      e.target.value = "";
+                    }}
+                  />
+                </label>
+                {props.voiceUrl ? (
+                  <button className="secondary" onClick={removeVoice}>
+                    বাদ দিন
+                  </button>
+                ) : null}
+              </div>
+              {props.voiceUrl ? <audio controls src={props.voiceUrl} /> : null}
+            </div>
             <div className="row toggles">
               <label className="check">
                 <input type="checkbox" checked={props.music} onChange={(e) => set("music", e.target.checked)} />

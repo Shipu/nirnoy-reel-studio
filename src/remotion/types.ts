@@ -13,6 +13,10 @@ export type ReelProps = {
   music: boolean;
   /** Tick / chime / whoosh effects. */
   sfx: boolean;
+  /** Bangla voice-over of the question (blob/object URL), read before the countdown. */
+  voiceUrl: string | null;
+  /** Length of the voice-over in seconds (measured in the studio). */
+  voiceSec: number;
 };
 
 export const FPS = 30;
@@ -22,8 +26,11 @@ export const HEIGHT = 1920;
 /** Seconds on the explanation screen: ~22 Bangla characters per second, clamped to 6–14s. */
 const explainSeconds = (text: string) => Math.min(14, Math.max(6, text.length / 22));
 
+/** The voice-over starts once the question has faded in. */
+export const VOICE_START = 1.0;
+
 export const timeline = (p: ReelProps) => {
-  const thinkStart = 1.2;
+  const thinkStart = p.voiceUrl && p.voiceSec > 0 ? VOICE_START + p.voiceSec + 0.4 : 1.2;
   const thinkEnd = thinkStart + 6;
   const explain = thinkEnd + 1.2;
   const cta = explain + explainSeconds(p.explanation);
