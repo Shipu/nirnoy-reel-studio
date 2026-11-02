@@ -44,7 +44,7 @@ Access ঠিক না থাকলে Worker সব `/api` request 401 দে�
 Studio পুরো reel-এর narration (প্রশ্ন, অপশন, চিন্তা করুন, উত্তর, ব্যাখ্যা, শেষ কথা) বাংলায় বানায়।
 একই লেখা + কণ্ঠ + model আবার চাইলে Cloudflare cache থেকে আসে, নতুন credit খরচ হয় না।
 
-### ElevenLabs (default, `TTS_PROVIDER=elevenlabs`)
+### ElevenLabs
 
 - Model: **`eleven_v3`** — ElevenLabs-এ বাংলা শুধু এই model-এ (`ELEVENLABS_MODEL` var দিয়ে বদলানো যায়)।
 - কণ্ঠ: `worker/index.ts`-এর `ELEVENLABS_VOICES` (Syed, Rakib, Rayhan, Swati S — Voice Library-র বাংলা কণ্ঠ)।
@@ -54,12 +54,7 @@ Studio পুরো reel-এর narration (প্রশ্ন, অপশন, চ
 - **Free plan-এ commercial license নেই** — test-এর জন্য ঠিক আছে, reel post করার আগে paid plan লাগবে।
 - `eleven_v3`-এ speed setting নেই; "ধীর" বাছলে লেখার শুরুতে `[slowly]` tag যায়।
 
-### Azure (`TTS_PROVIDER=azure`)
-
-`bn-BD-NabanitaNeural` / `bn-BD-PradeepNeural`। Azure portal → Speech (Free F0) → `npx wrangler secret put AZURE_SPEECH_KEY`,
-আর `wrangler.jsonc`-এ `AZURE_SPEECH_REGION`।
-
-যেকোনো provider ছাড়াও studio-তে প্রতিটা ধাপে "রেকর্ড" দিয়ে নিজের audio দেওয়া যায়।
+ElevenLabs ছাড়াও studio-তে প্রতিটা ধাপে "রেকর্ড" দিয়ে নিজের audio দেওয়া যায়।
 
 ## Template বদলানো
 
