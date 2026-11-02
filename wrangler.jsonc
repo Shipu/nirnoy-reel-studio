@@ -28,6 +28,12 @@
 			"migrations_dir": "migrations"
 		}
 	],
+	"routes": [
+		{
+			"pattern": "xyz.nirnoy.app",
+			"custom_domain": true
+		}
+	],
 	"workers_dev": true,
 	"preview_urls": false,
 	"observability": {
