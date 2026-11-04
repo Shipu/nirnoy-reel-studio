@@ -1,5 +1,5 @@
-import { Player } from "@remotion/player";
-import { renderMediaOnWeb } from "@remotion/web-renderer";
+import { Player, Thumbnail } from "@remotion/player";
+import { renderMediaOnWeb, renderStillOnWeb } from "@remotion/web-renderer";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   type RandomFilters,
@@ -7,17 +7,25 @@ import {
   SEGMENT_LABELS,
   type TtsVoice,
   audioDuration,
+  type ApiQuestion,
+  diffQuestion,
   fetchQuestion,
   fetchRandom,
   fetchReels,
   fetchVoices,
   logReel,
+  saveQuestion,
   synthesize,
   narrationScripts,
   toReelProps,
 } from "./api";
 import { MCQReel } from "./remotion/MCQReel";
-import { FPS, HEIGHT, type ReelProps, SEGMENTS, type SegmentKey, WIDTH, durationInFrames, hasExplanation } from "./remotion/types";
+import { MCQThumbnail } from "./remotion/MCQThumbnail";
+import { MUSIC, type MusicKey } from "./remotion/music";
+import { ClipPlayer } from "./ClipPlayer";
+import { startMic } from "./recorder";
+import { type ClipSource, deleteClip, loadClips, saveClip } from "./voiceStore";
+import { FPS, HEIGHT, type ReelProps, SEGMENTS, type SegmentKey, THEMES, type ThemeKey, WIDTH, themeOf, durationInFrames, hasExplanation } from "./remotion/types";
 
 const revokeAll = (p: ReelProps | null) => {
   for (const clip of Object.values(p?.voice ?? {})) if (clip) URL.revokeObjectURL(clip.url);
@@ -29,7 +37,9 @@ export function App() {
   const [idInput, setIdInput] = useState("");
   const [filters, setFilters] = useState<RandomFilters>({ exam_name: "bar_council", year: "", topic_id: "", skip_used: true });
   const [props, setProps] = useState<ReelProps | null>(null);
+  const [original, setOriginal] = useState<ApiQuestion | null>(null);
   const [status, setStatus] = useState<Status>({ kind: "idle", text: "" });
+  const [view, setView] = useState<"video" | "thumbnail">("video");
   const [progress, setProgress] = useState<number | null>(null);
   const [reels, setReels] = useState<ReelLog[]>([]);
   const abortRef = useRef<AbortController | null>(null);
@@ -57,11 +67,34 @@ export function App() {
       const next = toReelProps(q);
       setProps((old) => {
         revokeAll(old);
-        return next;
+        return old ? { ...next, theme: old.theme, music: old.music, sfx: old.sfx } : next;
       });
+      setOriginal(q);
       setScripts(narrationScripts(next));
       setIdInput(String(q.id));
-      setStatus({ kind: "ok", text: `প্রশ্ন #${q.id} লোড হয়েছে। লেখা দেখে নিন, দরকার হলে ঠিক করুন।` });
+      const saved = await loadClips(q.id).catch(() => []);
+      for (const c of saved) {
+        const url = URL.createObjectURL(c.blob);
+        setProps((p) => (p && p.questionId === q.id ? { ...p, voice: { ...p.voice, [c.segment]: { url, sec: c.sec, source: c.source } } } : p));
+      }
+      setStatus({
+        kind: "ok",
+        text: `প্রশ্ন #${q.id} লোড হয়েছে।${saved.length ? ` আগের ${saved.length}টি voice ফিরিয়ে আনা হয়েছে।` : ""} লেখা দেখে নিন, দরকার হলে ঠিক করুন।`,
+      });
+    } catch (e) {
+      setStatus({ kind: "error", text: (e as Error).message });
+    }
+  };
+
+  const edit = useMemo(() => (props && original && props.questionId === original.id ? diffQuestion(original, props) : null), [props, original]);
+
+  const saveEdits = async () => {
+    if (!props || !edit) return;
+    setStatus({ kind: "busy", text: "ডাটাবেসে সেভ করছি…" });
+    try {
+      const saved = await saveQuestion(props.questionId, edit);
+      setOriginal(saved);
+      setStatus({ kind: "ok", text: `প্রশ্ন #${saved.id} ডাটাবেসে সেভ হয়েছে।` });
     } catch (e) {
       setStatus({ kind: "error", text: (e as Error).message });
     }
@@ -103,17 +136,45 @@ export function App() {
     }
   };
 
+  const downloadThumbnail = async () => {
+    if (!props) return;
+    setStatus({ kind: "busy", text: "Thumbnail বানাচ্ছি…" });
+    try {
+      const { blob } = await renderStillOnWeb({
+        composition: { id: "MCQThumbnail", component: MCQThumbnail, durationInFrames: 1, fps: FPS, width: WIDTH, height: HEIGHT, defaultProps: props },
+        inputProps: props,
+        frame: 0,
+      });
+      const url = URL.createObjectURL(await blob({ format: "jpeg", quality: 0.92 }));
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `nirnoy-thumbnail-q${props.questionId}.jpg`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      setStatus({ kind: "ok", text: `Download হয়েছে: nirnoy-thumbnail-q${props.questionId}.jpg` });
+    } catch (e) {
+      setStatus({ kind: "error", text: `Thumbnail ব্যর্থ: ${(e as Error).message}` });
+    }
+  };
+
   const activeSegments = (p: ReelProps) => SEGMENTS.filter((k) => k !== "explanation" || hasExplanation(p));
 
-  const attachClip = async (key: SegmentKey, blob: Blob) => {
+  /** Puts a clip on a segment and keeps a copy in the browser (unless it just came from there). */
+  const attachClip = async (key: SegmentKey, blob: Blob, source: ClipSource, persist = true) => {
     const url = URL.createObjectURL(blob);
     const sec = await audioDuration(url);
+    const questionId = props?.questionId;
     setProps((p) => {
       if (!p) return p;
       const old = p.voice[key];
       if (old) URL.revokeObjectURL(old.url);
-      return { ...p, voice: { ...p.voice, [key]: { url, sec } } };
+      return { ...p, voice: { ...p.voice, [key]: { url, sec, source } } };
     });
+    if (persist && questionId !== undefined) {
+      await saveClip(questionId, { segment: key, blob, sec, source }).catch(() =>
+        setStatus({ kind: "error", text: "Voice browser-এ সেভ করা গেল না (storage ভরা বা private mode?)। এই tab বন্ধ না করা পর্যন্ত থাকবে।" }),
+      );
+    }
     return sec;
   };
 
@@ -126,8 +187,11 @@ export function App() {
       for (const [i, key] of keys.entries()) {
         const text = scripts[key].trim();
         if (!text) continue;
+        // "সব voice বানান" never replaces your own recording or uploaded file; the per-segment button still can.
+        const existing = props.voice[key];
+        if (!only && existing && existing.source !== "tts") continue;
         setStatus({ kind: "busy", text: `Voice বানাচ্ছি (${i + 1}/${keys.length}): ${SEGMENT_LABELS[key]}` });
-        total += await attachClip(key, await synthesize(text, voice, rate));
+        total += await attachClip(key, await synthesize(text, voice, rate), "tts");
       }
       setStatus({ kind: "ok", text: `Voice তৈরি (${total.toFixed(1)} সেকেন্ড কথা)। Preview চালিয়ে শুনে নিন।` });
     } catch (e) {
@@ -137,9 +201,46 @@ export function App() {
     }
   };
 
+  const [recording, setRecording] = useState<{ key: SegmentKey; started: number; mic: Awaited<ReturnType<typeof startMic>> } | null>(null);
+  const [recSeconds, setRecSeconds] = useState(0);
+  useEffect(() => {
+    if (!recording) return;
+    const id = setInterval(() => setRecSeconds((Date.now() - recording.started) / 1000), 100);
+    return () => clearInterval(id);
+  }, [recording]);
+  // Release the microphone if the studio unmounts mid-take.
+  const micRef = useRef<Awaited<ReturnType<typeof startMic>> | null>(null);
+  useEffect(() => () => micRef.current?.cancel(), []);
+
+  const startRecording = async (key: SegmentKey) => {
+    try {
+      const mic = await startMic();
+      micRef.current = mic;
+      setRecSeconds(0);
+      setRecording({ key, started: Date.now(), mic });
+      setStatus({ kind: "busy", text: `রেকর্ড হচ্ছে: ${SEGMENT_LABELS[key]} — উপরের লেখাটা পড়ুন, শেষ হলে "থামান" চাপুন।` });
+    } catch (e) {
+      setStatus({ kind: "error", text: `মাইক চালু হয়নি: ${(e as Error).message}` });
+    }
+  };
+
+  const stopRecording = async () => {
+    if (!recording) return;
+    const { key, mic } = recording;
+    micRef.current = null;
+    setRecording(null);
+    try {
+      const sec = await attachClip(key, await mic.stop(), "rec");
+      setStatus({ kind: "ok", text: `${SEGMENT_LABELS[key]} রেকর্ড হয়েছে (${sec.toFixed(1)} সেকেন্ড)। শুনে দেখুন, পছন্দ না হলে আবার রেকর্ড করুন।` });
+    } catch (e) {
+      setStatus({ kind: "error", text: (e as Error).message });
+    }
+  };
+
   const removeClip = (key?: SegmentKey) =>
     setProps((p) => {
       if (!p) return p;
+      for (const k of key ? [key] : SEGMENTS) void deleteClip(p.questionId, k).catch(() => undefined);
       if (!key) {
         revokeAll(p);
         return { ...p, voice: {} };
@@ -191,21 +292,32 @@ export function App() {
         </section>
 
         {props ? (
-          <section>
-            <h2>লেখা (#{props.questionId})</h2>
-            <label>
-              Act / Topic
-              <input value={props.act} onChange={(e) => set("act", e.target.value)} />
-            </label>
-            <label>
-              উৎস (পরীক্ষা, সাল)
-              <input value={props.source} onChange={(e) => set("source", e.target.value)} />
-            </label>
-            <label>
-              প্রশ্ন <small>{props.body.length} অক্ষর</small>
-              <textarea rows={4} value={props.body} onChange={(e) => set("body", e.target.value)} />
-            </label>
-            {props.options.map((o, i) => (
+          <section className="groups">
+            <details className="group" open>
+              <summary>
+                প্রশ্ন ও উত্তর <small>#{props.questionId}</small>
+                {edit ? <span className="dot" title="ডাটাবেসে সেভ হয়নি" /> : null}
+              </summary>
+              <div className="group-body">
+                <>
+                  <label>
+                    Act / Topic
+                    <input value={props.act} onChange={(e) => set("act", e.target.value)} />
+                  </label>
+                  <label>
+                    উৎস (পরীক্ষা, সাল)
+                    <input value={props.source} onChange={(e) => set("source", e.target.value)} />
+                  </label>
+                </>
+                <label>
+                  প্রশ্ন <small>{props.body.length} অক্ষর</small>
+                  <textarea rows={4} value={props.body} onChange={(e) => set("body", e.target.value)} />
+                </label>
+                <div className="options">
+                  <div className="field-title">
+                    অপশন <small>গোল বোতামে ঠিক উত্তর বাছুন</small>
+                  </div>
+                  {props.options.map((o, i) => (
               <label key={i} className="option">
                 <span>
                   <input type="radio" name="correct" checked={props.correctIndex === i} onChange={() => set("correctIndex", i)} title="সঠিক উত্তর" />
@@ -217,20 +329,83 @@ export function App() {
                 />
               </label>
             ))}
-            <label>
-              ব্যাখ্যা <small>{props.explanation.length} অক্ষর{props.explanation.length > 450 ? " · লম্বা, ছোট করলে ভালো" : ""}</small>
-              <textarea rows={6} value={props.explanation} onChange={(e) => set("explanation", e.target.value)} />
-            </label>
-            <label>
-              শেষ পর্দার ট্যাগলাইন
-              <input value={props.tagline} onChange={(e) => set("tagline", e.target.value)} />
-            </label>
-            <label>
-              শেষ পর্দার লাইন
-              <input value={props.ctaLine} onChange={(e) => set("ctaLine", e.target.value)} />
-            </label>
-            <div className="voice">
-              <h2>Voice-over</h2>
+                </div>
+                <label>
+                  ব্যাখ্যা <small>{props.explanation.length} অক্ষর{props.explanation.length > 450 ? " · লম্বা, ছোট করলে ভালো" : ""}</small>
+                  <textarea rows={6} value={props.explanation} onChange={(e) => set("explanation", e.target.value)} />
+                </label>
+                <div className="row save-row">
+                  <button className="secondary" disabled={busy || !edit} onClick={saveEdits}>
+                    ডাটাবেসে সেভ করুন
+                  </button>
+                  <small>{edit ? "বদলেছে, সেভ হয়নি (টপিক নয়)" : "ডাটাবেসের সাথে মিলে আছে"}</small>
+                </div>
+              </div>
+            </details>
+
+            <details className="group" open>
+              <summary>ডিজাইন ও শেষ পর্দা</summary>
+              <div className="group-body">
+                <label>
+                  থিম
+                  <select value={props.theme} onChange={(e) => set("theme", e.target.value as ThemeKey)}>
+                    {(Object.keys(THEMES) as ThemeKey[]).map((k) => (
+                      <option key={k} value={k}>
+                        {THEMES[k].label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  ট্যাগলাইন
+                  <input value={props.tagline} onChange={(e) => set("tagline", e.target.value)} />
+                </label>
+                {themeOf(props.theme).studio ? (
+                  <>
+                    <label>
+                      স্লোগান <small>লোগোর পাশে</small>
+                      <input value={props.slogan} onChange={(e) => set("slogan", e.target.value)} />
+                    </label>
+                    <label>
+                      ছোট লাইন <small>কমা পর্যন্ত ম্লান, বাকিটা হাইলাইট</small>
+                      <input value={props.subline} onChange={(e) => set("subline", e.target.value)} />
+                    </label>
+                  </>
+                ) : null}
+                <label>
+                  কল-টু-অ্যাকশন লাইন
+                  <input value={props.ctaLine} onChange={(e) => set("ctaLine", e.target.value)} />
+                </label>
+                <label>
+                  বোতামের লেখা
+                  <input value={props.ctaUrl} onChange={(e) => set("ctaUrl", e.target.value)} />
+                </label>
+              </div>
+            </details>
+
+            <details className="group">
+              <summary>অডিও</summary>
+              <div className="group-body">
+                <label>
+                  Background music
+                  <select value={props.music} onChange={(e) => set("music", e.target.value as ReelProps["music"])}>
+                    <option value="none">বন্ধ</option>
+                    {(Object.keys(MUSIC) as MusicKey[]).map((k) => (
+                      <option key={k} value={k}>
+                        {MUSIC[k].label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                {props.music !== "none" ? <audio className="music-preview" controls src={MUSIC[props.music].url} /> : null}
+                <div className="row toggles">
+                  <label className="check">
+                    <input type="checkbox" checked={props.sfx} onChange={(e) => set("sfx", e.target.checked)} />
+                    Sound effect
+                  </label>
+                </div>
+                <div className="voice">
+                  <div className="field-title">Voice-over</div>
               <div className="row">
                 <select value={voice} onChange={(e) => setVoice(e.target.value)}>
                   {voices.map((v) => (
@@ -251,7 +426,7 @@ export function App() {
                     return (
                       <div key={key} className="segment">
                         <label>
-                          {SEGMENT_LABELS[key]} {clip ? <small>{clip.sec.toFixed(1)} সে.</small> : null}
+                          {SEGMENT_LABELS[key]} {clip ? <small>{clip.sec.toFixed(1)} সে.{clip.source === "rec" ? " · নিজের গলা" : clip.source === "file" ? " · ফাইল" : ""}</small> : null}
                           <textarea
                             rows={key === "explanation" ? 4 : 2}
                             value={scripts[key]}
@@ -262,27 +437,34 @@ export function App() {
                           <button className="secondary" disabled={voiceBusy || !scripts[key].trim()} onClick={() => makeVoice(key)}>
                             {clip ? "আবার" : "বানান"}
                           </button>
-                          <label className="upload secondary">
-                            রেকর্ড
+                          {recording?.key === key ? (
+                            <button className="rec on" onClick={stopRecording}>
+                              ■ থামান {recSeconds.toFixed(1)}s
+                            </button>
+                          ) : (
+                            <button className="rec" disabled={voiceBusy || recording !== null} onClick={() => startRecording(key)} title="নিজের গলায় রেকর্ড করুন">
+                              🎙 রেকর্ড
+                            </button>
+                          )}
+                          <label className="upload secondary" title="অডিও ফাইল দিন">
+                            ফাইল
                             <input
                               type="file"
                               accept="audio/*"
                               onChange={(e) => {
                                 const f = e.target.files?.[0];
-                                if (f) attachClip(key, f).catch((err) => setStatus({ kind: "error", text: err.message }));
+                                if (f) attachClip(key, f, "file").catch((err) => setStatus({ kind: "error", text: err.message }));
                                 e.target.value = "";
                               }}
                             />
                           </label>
                           {clip ? (
-                            <>
-                              <audio controls src={clip.url} />
-                              <button className="link" onClick={() => removeClip(key)}>
-                                বাদ
-                              </button>
-                            </>
+                            <button className="link" onClick={() => removeClip(key)}>
+                              বাদ
+                            </button>
                           ) : null}
                         </div>
+                        {clip ? <ClipPlayer url={clip.url} sec={clip.sec} /> : null}
                       </div>
                     );
                   })
@@ -300,21 +482,9 @@ export function App() {
                   সব voice বাদ দিন
                 </button>
               ) : null}
-            </div>
-            <div className="row toggles">
-              <label className="check">
-                <input type="checkbox" checked={props.music} onChange={(e) => set("music", e.target.checked)} />
-                Background music
-              </label>
-              <label className="check">
-                <input type="checkbox" checked={props.sfx} onChange={(e) => set("sfx", e.target.checked)} />
-                Sound effect
-              </label>
-            </div>
-            <label>
-              বোতামের লেখা
-              <input value={props.ctaUrl} onChange={(e) => set("ctaUrl", e.target.value)} />
-            </label>
+                </div>
+              </div>
+            </details>
           </section>
         ) : null}
 
@@ -339,7 +509,27 @@ export function App() {
       <main className="stage">
         {props ? (
           <>
+            <div className="tabs">
+              <button className={view === "video" ? "" : "secondary"} onClick={() => setView("video")}>
+                Video
+              </button>
+              <button className={view === "thumbnail" ? "" : "secondary"} onClick={() => setView("thumbnail")}>
+                Thumbnail
+              </button>
+            </div>
             <div className="player">
+              {view === "thumbnail" ? (
+                <Thumbnail
+                  component={MCQThumbnail}
+                  inputProps={props}
+                  frameToDisplay={0}
+                  durationInFrames={1}
+                  fps={FPS}
+                  compositionWidth={WIDTH}
+                  compositionHeight={HEIGHT}
+                  style={{ width: "100%", height: "100%" }}
+                />
+              ) : (
               <Player
                 component={MCQReel}
                 inputProps={props}
@@ -352,13 +542,19 @@ export function App() {
                 controls
                 loop
               />
+              )}
             </div>
             <div className="actions">
               <span className="muted">{(duration / FPS).toFixed(1)} সেকেন্ড · 1080×1920</span>
               {progress === null ? (
-                <button disabled={busy} onClick={render}>
-                  MP4 Download
-                </button>
+                <>
+                  <button disabled={busy} onClick={render}>
+                    MP4 Download
+                  </button>
+                  <button className="secondary" disabled={busy} onClick={downloadThumbnail}>
+                    Thumbnail Download (JPG)
+                  </button>
+                </>
               ) : (
                 <>
                   <progress value={progress} max={1} />

@@ -144,12 +144,20 @@ async function authorize(request: Request, env: Env): Promise<string | null> {
   }
 }
 
-async function upstream(env: Env, path: string, params?: URLSearchParams): Promise<Response> {
+async function upstream(env: Env, path: string, params?: URLSearchParams, init?: { method: string; body: string }): Promise<Response> {
   if (!env.REEL_API_KEY) return json({ message: "REEL_API_KEY secret is not set on the Worker." }, 500);
 
   const base = env.NIRNOY_API_BASE.replace(/\/$/, "");
   const url = `${base}/api/v1/reel${path}${params && [...params].length ? `?${params}` : ""}`;
-  const res = await fetch(url, { headers: { "X-Reel-Key": env.REEL_API_KEY, Accept: "application/json" } });
+  const res = await fetch(url, {
+    method: init?.method ?? "GET",
+    body: init?.body,
+    headers: {
+      "X-Reel-Key": env.REEL_API_KEY,
+      Accept: "application/json",
+      ...(init?.body ? { "Content-Type": "application/json" } : {}),
+    },
+  });
   const body = await res.text();
 
   return new Response(body, {
@@ -191,6 +199,14 @@ export default {
 
     const match = url.pathname.match(/^\/api\/questions\/(\d+)$/);
     if (request.method === "GET" && match) return upstream(env, `/questions/${match[1]}`);
+    if (request.method === "PATCH" && match) {
+      // Only wording and the correct option can be edited here; topics and status never pass through.
+      const raw = (await request.json().catch(() => null)) as Record<string, unknown> | null;
+      if (!raw) return json({ message: "Invalid JSON." }, 422);
+      const edit: Record<string, unknown> = {};
+      for (const key of ["body", "explanation", "options", "correct_option_id"]) if (key in raw) edit[key] = raw[key];
+      return upstream(env, `/questions/${match[1]}`, undefined, { method: "PATCH", body: JSON.stringify(edit) });
+    }
 
     if (url.pathname === "/api/reels" && request.method === "GET") {
       const { results } = await env.DB.prepare(

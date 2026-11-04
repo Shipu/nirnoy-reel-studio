@@ -40,10 +40,13 @@ export function toReelProps(q: ApiQuestion): ReelProps {
     options: q.options.map((o, i) => ({ label: o.label ?? BN_LETTERS[i] ?? String(i + 1), text: plain(o.text) })),
     correctIndex: Math.max(0, q.options.findIndex((o) => o.is_correct)),
     explanation: stripAnswerLine(plain(q.explanation)),
+    theme: "nirnoyDark",
+    slogan: "সন্দেহ নয়, নিশ্চয়তা",
+    subline: "মুখস্থ নয়, বুঝে পড়ুন।",
     tagline: "চাকরি ও পেশাগত পরীক্ষার MCQ প্রস্তুতি, ব্যাখ্যাসহ",
-    ctaLine: "Early access পেতে এখনই join করুন",
+    ctaLine: "Early access পেতে এখনই ভিজিট করুন",
     ctaUrl: "nirnoy.app",
-    music: true,
+    music: "calm",
     sfx: true,
     voice: {},
   };
@@ -66,6 +69,41 @@ export const fetchRandom = (f: RandomFilters) => {
   params.set("skip_used", f.skip_used ? "1" : "0");
   return request<{ data: ApiQuestion }>(`/api/questions/random?${params}`).then((r) => r.data);
 };
+
+export type QuestionEdit = {
+  body?: string;
+  explanation?: string;
+  options?: { id: number; text: string }[];
+  correct_option_id?: number;
+};
+
+export const saveQuestion = (id: number, edit: QuestionEdit) =>
+  request<{ data: ApiQuestion }>(`/api/questions/${id}`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(edit),
+  }).then((r) => r.data);
+
+/** Builds the PATCH body from what the studio changed since the question was loaded; nothing changed = null. */
+export function diffQuestion(original: ApiQuestion, p: ReelProps): QuestionEdit | null {
+  const edit: QuestionEdit = {};
+  if (p.body !== plain(original.body)) edit.body = p.body;
+
+  // The studio hides the leading "সঠিক উত্তর: …" line; put it back so saving doesn't delete it.
+  const originalExplanation = plain(original.explanation);
+  if (p.explanation !== stripAnswerLine(originalExplanation)) {
+    const answerLine = originalExplanation.match(/^\s*সঠিক উত্তর[^\n]*/)?.[0].trim();
+    edit.explanation = answerLine && p.explanation ? `${answerLine}\n\n${p.explanation}` : p.explanation;
+  }
+
+  const changed = original.options.flatMap((o, i) => (p.options[i] && p.options[i].text !== plain(o.text) ? [{ id: o.id, text: p.options[i].text }] : []));
+  if (changed.length) edit.options = changed;
+
+  const correct = original.options[p.correctIndex];
+  if (correct && !correct.is_correct) edit.correct_option_id = correct.id;
+
+  return Object.keys(edit).length ? edit : null;
+}
 
 export type ReelLog = { id: number; question_id: number; rendered_by: string | null; created_at: string };
 

@@ -3,3 +3,5 @@ dist
 .wrangler
 .dev.vars
 *.mp4
+.env*
+!.env.example

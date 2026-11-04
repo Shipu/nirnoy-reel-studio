@@ -1,70 +1,13 @@
-import "@fontsource/noto-serif-bengali/bengali-400.css";
-import "@fontsource/noto-serif-bengali/bengali-500.css";
-import "@fontsource/noto-serif-bengali/bengali-600.css";
-import "@fontsource/noto-serif-bengali/bengali-700.css";
-import "@fontsource/noto-serif-bengali/latin-400.css";
-import "@fontsource/noto-serif-bengali/latin-600.css";
-import "@fontsource/noto-serif-bengali/latin-700.css";
-import React, { useEffect, useState } from "react";
+import React from "react";
 import { Audio } from "@remotion/media";
-import { AbsoluteFill, Easing, Sequence, continueRender, delayRender, interpolate, useCurrentFrame, useVideoConfig } from "remotion";
+import { AbsoluteFill, Sequence, interpolate, useCurrentFrame, useVideoConfig } from "remotion";
 import chimeUrl from "./sfx/chime.wav?url";
-import musicUrl from "./sfx/music.wav?url";
-import tickUrl from "./sfx/tick.wav?url";
+import countdownUrl from "./sfx/countdown.wav?url";
 import whooshUrl from "./sfx/whoosh.wav?url";
-import { type ReelProps, SEGMENTS, THINK_SECONDS, fit, timeline } from "./types";
-
-// ---- Brand tokens (from nirnoy.pen, "mn-" set) ----
-const C = {
-  canvas: "#FAF8F4",
-  card: "#FFFFFF",
-  line: "#ECE8F0",
-  ink: "#16142B",
-  ink2: "#5B5872",
-  ink3: "#9A97AE",
-  muted: "#F1EFF5",
-  primary: "#4F46E5",
-  primarySoft: "#EEF2FF",
-  wordmark: "#312E81",
-  accent: "#F59E0B",
-  accentSoft: "#FEF3C7",
-  accentInk: "#7A4B00",
-  success: "#16A34A",
-  successSoft: "#DCFCE7",
-  successInk: "#15803D",
-  hero1: "#3730A3",
-  hero2: "#1E1B4B",
-  onHero2: "#C7D2FE",
-};
-const FONT = "'Noto Serif Bengali', serif";
-const BN = ["০", "১", "২", "৩", "৪", "৫", "৬", "৭", "৮", "৯"];
-const bn = (n: number) => String(n).replace(/\d/g, (d) => BN[+d]);
-
-const clamp = { extrapolateLeft: "clamp", extrapolateRight: "clamp" } as const;
-const ease = Easing.bezier(0.16, 1, 0.3, 1);
-
-const useFontsReady = () => {
-  const [handle] = useState(() => delayRender("fonts"));
-  useEffect(() => {
-    Promise.all(
-      [400, 500, 600, 700].map((w) => document.fonts.load(`${w} 40px 'Noto Serif Bengali'`, "অআক১")),
-    ).then(() => continueRender(handle));
-  }, [handle]);
-};
-
-// Logo / Primary from nirnoy.pen (viewBox 200x200)
-const LogoMark: React.FC<{ size: number; reversed?: boolean }> = ({ size, reversed }) => (
-  <svg width={size} height={size} viewBox="0 0 200 200">
-    <path
-      fill={reversed ? "#FFFFFF" : C.primary}
-      d="M32.198 110.005l-7.988 45.301a17 17 0 0 0 33.484 5.904l7.988-45.301a17 17 0 0 0-33.484-5.904z m54.946-39.392l-14.934 84.693a17 17 0 0 0 33.484 5.904l14.933-84.693a17 17 0 0 0-33.483-5.904z"
-    />
-    <path
-      fill={C.accent}
-      d="M142.09 31.22l-21.88 124.086a17 17 0 0 0 33.484 5.904l21.879-124.085a17 17 0 0 0-33.483-5.905z"
-    />
-  </svg>
-);
+import { MUSIC } from "./music";
+import { StudioScene } from "./studio";
+import { EndScreen, FONT, LogoMark, bn, clamp, ease, useFontsReady } from "./shared";
+import { type ReelProps, SEGMENTS, THINK_SECONDS, fit, themeOf, timeline } from "./types";
 
 const Check: React.FC<{ size: number; color: string }> = ({ size, color }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round">
@@ -74,6 +17,7 @@ const Check: React.FC<{ size: number; color: string }> = ({ size, color }) => (
 );
 
 export const MCQReel: React.FC<ReelProps> = (p) => {
+  const C = themeOf(p.theme);
   useFontsReady();
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
@@ -102,11 +46,11 @@ export const MCQReel: React.FC<ReelProps> = (p) => {
   const explainSize = fit(p.explanation.length, [[180, 40], [280, 36], [400, 32], [520, 29]], 26);
   const correct = p.options[p.correctIndex];
 
-  return (
-    <AbsoluteFill style={{ backgroundColor: C.canvas, fontFamily: FONT, color: C.ink }}>
-      {p.music ? (
+  const audio = (
+    <>
+      {p.music !== "none" ? (
         <Audio
-          src={musicUrl}
+          src={MUSIC[p.music].url}
           loop
           volume={(f) =>
             // Mild bed: quiet overall, dipped further under narration and the reveal chime.
@@ -125,11 +69,11 @@ export const MCQReel: React.FC<ReelProps> = (p) => {
       ))}
       {p.sfx ? (
         <>
-          {Array.from({ length: THINK_SECONDS }, (_, i) => (
-            <Sequence key={i} from={Math.round(s(T.thinkStart + i))} durationInFrames={Math.round(s(0.3))} layout="none">
-              <Audio src={tickUrl} volume={i >= THINK_SECONDS - 2 ? 0.9 : 0.6} />
-            </Sequence>
-          ))}
+          {/* One pre-mixed track with a tick on every second (last two louder): six 0.12s clips in
+              their own short Sequences were too short for the player to start reliably, so ticks got skipped. */}
+          <Sequence from={Math.round(s(T.thinkStart))} durationInFrames={Math.round(s(THINK_SECONDS + 0.2))} layout="none">
+            <Audio src={countdownUrl} volume={1} />
+          </Sequence>
           <Sequence from={Math.round(s(T.reveal))} durationInFrames={Math.round(s(1.6))} layout="none">
             <Audio src={chimeUrl} volume={0.55} />
           </Sequence>
@@ -143,6 +87,14 @@ export const MCQReel: React.FC<ReelProps> = (p) => {
           </Sequence>
         </>
       ) : null}
+    </>
+  );
+
+  if (C.studio) return <StudioScene p={p} C={C} T={T} audio={audio} />;
+
+  return (
+    <AbsoluteFill style={{ backgroundColor: C.canvas, fontFamily: FONT, color: C.ink }}>
+      {audio}
       <div
         style={{
           position: "absolute",
@@ -159,7 +111,7 @@ export const MCQReel: React.FC<ReelProps> = (p) => {
           আজকের MCQ
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 12, height: 64 }}>
-          <LogoMark size={58} />
+          <LogoMark size={58} C={C} />
           {/* Noto Serif Bengali sits high in its line box; lineHeight 1 + a small nudge centres the matra-to-baseline body on the mark. */}
           <div style={{ fontSize: 46, lineHeight: 1, fontWeight: 700, color: C.wordmark, translate: "0px 5px" }}>নির্ণয়</div>
         </div>
@@ -296,30 +248,7 @@ export const MCQReel: React.FC<ReelProps> = (p) => {
         <div style={{ marginTop: 26, fontSize: 36, color: C.ink2 }}>আপনার উত্তর কমেন্টে লিখুন</div>
       </div>
 
-      <AbsoluteFill
-        style={{
-          background: `linear-gradient(180deg, ${C.hero1} 0%, ${C.hero2} 100%)`,
-          opacity: ctaP,
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          justifyContent: "center",
-          gap: 30,
-          padding: "0 80px",
-          textAlign: "center",
-          color: "#FFFFFF",
-        }}
-      >
-        <div style={{ scale: interpolate(ctaP, [0, 1], [0.85, 1]) }}>
-          <LogoMark size={190} reversed />
-        </div>
-        <div style={{ fontSize: 96, fontWeight: 700 }}>নির্ণয়</div>
-        <div style={{ fontSize: 44, lineHeight: 1.6, color: C.onHero2 }}>{p.tagline}</div>
-        <div style={{ marginTop: 40, fontSize: 46, fontWeight: 600, color: "#FFFFFF" }}>{p.ctaLine}</div>
-        <div style={{ backgroundColor: C.accent, color: C.hero2, fontSize: 50, fontWeight: 700, borderRadius: 999, padding: "22px 56px" }}>
-          {p.ctaUrl}
-        </div>
-      </AbsoluteFill>
+      <EndScreen p={p} C={C} progress={ctaP} />
     </AbsoluteFill>
   );
 };
