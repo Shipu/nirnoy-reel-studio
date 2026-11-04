@@ -15,6 +15,8 @@ export type ReelProps = {
   correctIndex: number;
   /** Empty string = no explanation screen. */
   explanation: string;
+  /** Brand tagline under the logo on the end screen. */
+  tagline: string;
   ctaLine: string;
   ctaUrl: string;
   /** Background music bed. */

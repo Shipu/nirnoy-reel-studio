@@ -40,6 +40,7 @@ export function toReelProps(q: ApiQuestion): ReelProps {
     options: q.options.map((o, i) => ({ label: o.label ?? BN_LETTERS[i] ?? String(i + 1), text: plain(o.text) })),
     correctIndex: Math.max(0, q.options.findIndex((o) => o.is_correct)),
     explanation: stripAnswerLine(plain(q.explanation)),
+    tagline: "চাকরি ও পেশাগত পরীক্ষার MCQ প্রস্তুতি, ব্যাখ্যাসহ",
     ctaLine: "Early access পেতে এখনই join করুন",
     ctaUrl: "nirnoy.app",
     music: true,

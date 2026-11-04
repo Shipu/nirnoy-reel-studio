@@ -314,7 +314,7 @@ export const MCQReel: React.FC<ReelProps> = (p) => {
           <LogoMark size={190} reversed />
         </div>
         <div style={{ fontSize: 96, fontWeight: 700 }}>নির্ণয়</div>
-        <div style={{ fontSize: 44, lineHeight: 1.6, color: C.onHero2 }}>পেশাদার পরীক্ষার MCQ প্রস্তুতি, ব্যাখ্যাসহ</div>
+        <div style={{ fontSize: 44, lineHeight: 1.6, color: C.onHero2 }}>{p.tagline}</div>
         <div style={{ marginTop: 40, fontSize: 46, fontWeight: 600, color: "#FFFFFF" }}>{p.ctaLine}</div>
         <div style={{ backgroundColor: C.accent, color: C.hero2, fontSize: 50, fontWeight: 700, borderRadius: 999, padding: "22px 56px" }}>
           {p.ctaUrl}

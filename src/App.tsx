@@ -222,6 +222,10 @@ export function App() {
               <textarea rows={6} value={props.explanation} onChange={(e) => set("explanation", e.target.value)} />
             </label>
             <label>
+              শেষ পর্দার ট্যাগলাইন
+              <input value={props.tagline} onChange={(e) => set("tagline", e.target.value)} />
+            </label>
+            <label>
               শেষ পর্দার লাইন
               <input value={props.ctaLine} onChange={(e) => set("ctaLine", e.target.value)} />
             </label>
