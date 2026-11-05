@@ -62,8 +62,9 @@ export const MCQReel: React.FC<ReelProps> = (p) => {
           }
         />
       ) : null}
+      {/* premountFor loads each clip a second early so the player starts it on time (first word not swallowed). */}
       {clips.map((c) => (
-        <Sequence key={c.key} from={Math.round(s(c.from))} durationInFrames={Math.ceil(s(c.to - c.from + 0.2))} layout="none">
+        <Sequence key={c.key} from={Math.round(s(c.from))} durationInFrames={Math.ceil(s(c.to - c.from + 0.2))} premountFor={fps}>
           <Audio src={c.url} volume={1} />
         </Sequence>
       ))}
@@ -71,19 +72,19 @@ export const MCQReel: React.FC<ReelProps> = (p) => {
         <>
           {/* One pre-mixed track with a tick on every second (last two louder): six 0.12s clips in
               their own short Sequences were too short for the player to start reliably, so ticks got skipped. */}
-          <Sequence from={Math.round(s(T.thinkStart))} durationInFrames={Math.round(s(THINK_SECONDS + 0.2))} layout="none">
+          <Sequence from={Math.round(s(T.thinkStart))} durationInFrames={Math.round(s(THINK_SECONDS + 0.2))} premountFor={fps}>
             <Audio src={countdownUrl} volume={1} />
           </Sequence>
-          <Sequence from={Math.round(s(T.reveal))} durationInFrames={Math.round(s(1.6))} layout="none">
+          <Sequence from={Math.round(s(T.reveal))} durationInFrames={Math.round(s(1.6))} premountFor={fps}>
             <Audio src={chimeUrl} volume={0.55} />
           </Sequence>
           {T.explain !== null ? (
-            <Sequence from={Math.round(s(T.explain - 0.25))} durationInFrames={Math.round(s(0.7))} layout="none">
+            <Sequence from={Math.round(s(T.explain - 0.45))} durationInFrames={Math.round(s(0.7))} premountFor={fps}>
               <Audio src={whooshUrl} volume={0.6} />
             </Sequence>
           ) : null}
-          <Sequence from={Math.round(s(T.cta - 0.25))} durationInFrames={Math.round(s(0.7))} layout="none">
-            <Audio src={whooshUrl} volume={0.7} />
+          <Sequence from={Math.round(s(T.cta - 0.5))} durationInFrames={Math.round(s(0.7))} premountFor={fps}>
+            <Audio src={whooshUrl} volume={0.6} />
           </Sequence>
         </>
       ) : null}

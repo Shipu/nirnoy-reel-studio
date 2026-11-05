@@ -137,7 +137,7 @@ export function narrationScripts(p: ReelProps): Record<SegmentKey, string> {
     think: "এবার চিন্তা করুন। আপনার হাতে ছয় সেকেন্ড।",
     answer: correct ? `সঠিক উত্তর, ${correct.label}, ${speakable(correct.text)}।` : "",
     explanation: speakable(p.explanation),
-    cta: "আর্লি অ্যাক্সেস পেতে এখনই ভিজিট করুন, নির্ণয় ডট অ্যাপ।",
+    cta: "চাকরি ও পেশাগত পরীক্ষার MCQ প্রস্তুতির আর্লি অ্যাক্সেস পেতে এখনই ভিজিট করুন, নির্ণয় ডট অ্যাপ।",
   };
 }
 

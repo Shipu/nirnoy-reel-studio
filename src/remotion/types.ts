@@ -76,7 +76,7 @@ export const THEMES = {
         divider: "#FFFFFF33",
         correctBg: "#22C55E33", correctStroke: "#4ADE80", correctLetterBg: "#4ADE80", correctLetterInk: "#1E1B4B",
         timerBoxBg: "#FBBF24", timerBoxInk: "#1E1B4B", timerTrack: "#FFFFFF1F",
-        ctaBg: "#FBBF24", ctaInk: "#1E1B4B", ctaShadow: "0 8px 24px #FBBF2466",
+        ctaBg: "#FBBF24", ctaInk: "#1E1B4B", ctaShadow: "0 8px 28px #FBBF2466",
         explainBg: "linear-gradient(135deg, #FFFFFF1F 0%, #FFFFFF0D 100%)", explainBorder: "1.5px solid #FFFFFF2E", explainAccent: true, explainBadge: true,
         explainShadow: "0 16px 40px #0B0A1F66",
         answerBg: "#22C55E2E", answerStroke: "#4ADE80", answerInk: "#BBF7D0", answerIcon: "#4ADE80",
@@ -109,7 +109,7 @@ export const THEMES = {
         divider: "#ECE8F0",
         correctBg: "#DCFCE7", correctStroke: "#16A34A", correctLetterBg: "#16A34A", correctLetterInk: "#FFFFFF",
         timerBoxBg: "#4F46E5", timerBoxInk: "#FFFFFF", timerTrack: "#F1EFF5",
-        ctaBg: "#4F46E5", ctaInk: "#FFFFFF", ctaShadow: "0 10px 28px #4F46E540",
+        ctaBg: "#4F46E5", ctaInk: "#FFFFFF", ctaShadow: "0 12px 32px #4F46E540",
         explainBg: "#16142B", explainBorder: "none", explainAccent: true, explainBadge: false,
         explainShadow: "none",
         answerBg: "#DCFCE7", answerStroke: "#16A34A", answerInk: "#15803D", answerIcon: "#16A34A",
@@ -224,7 +224,8 @@ export const timeline = (p: ReelProps) => {
   const explainLen = explain === null ? 0 : clipSec(p, "explanation") || readSeconds(p.explanation, 22, 6, 14);
 
   const cta = explainVoice !== null ? explainVoice + explainLen + 0.6 : answerVoice + answerLen + 1.0;
-  const ctaVoice = cta + 0.6;
+  // The end-screen whoosh runs cta - 0.5 … cta + 0.2 (audible until ~cta + 0.1); start talking as it ends — no overlap, no dead pause.
+  const ctaVoice = cta + 0.25;
   const ctaLen = clipSec(p, "cta") || 1.9;
   const end = ctaVoice + ctaLen + 1.0;
 

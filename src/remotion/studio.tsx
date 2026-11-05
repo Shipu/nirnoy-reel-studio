@@ -134,9 +134,11 @@ const Backdrop: React.FC<{ st: StudioStyle }> = ({ st }) => (
 );
 
 /** Spotlight + rigged mascot. `size` is the pen frame size (420 for the reel mascots). */
-const Niru: React.FC<React.PropsWithChildren<{ st: StudioStyle; top: number; left: number; opacity: number }>> = ({ st, top, left, opacity, children }) => (
+const Niru: React.FC<React.PropsWithChildren<{ st: StudioStyle; top: number; left: number; opacity: number; spotTop?: number }>> = ({
+  st, top, left, opacity, spotTop = 1270, children,
+}) => (
   <>
-    <Glow id="spot-reel" stops={st.spotlight} left={190} top={1270} width={640} height={600} opacity={opacity} />
+    <Glow id="spot-reel" stops={st.spotlight} left={190} top={spotTop} width={640} height={600} opacity={opacity} />
     <div style={{ position: "absolute", left, top, width: 420, height: 420, opacity }}>{children}</div>
   </>
 );
@@ -182,8 +184,8 @@ const OptionRow: React.FC<{
 }> = ({ C, st, label, text, size, on, opacity = 1, translate, scale }) => (
   <div
     style={{
-      display: "flex", alignItems: "center", gap: 24, padding: "20px 26px", borderRadius: 24,
-      backgroundColor: on ? st.correctBg : C.card, border: `2px solid ${on ? st.correctStroke : C.line}`,
+      display: "flex", alignItems: "center", gap: 24, padding: on ? "20px 26px" : "20.5px 26.5px", borderRadius: 24,
+      backgroundColor: on ? st.correctBg : C.card, border: on ? `2px solid ${st.correctStroke}` : `1.5px solid ${C.line}`,
       opacity, translate, scale,
     }}
   >
@@ -284,9 +286,9 @@ const CtaLine: React.FC<{ st: StudioStyle; text: string; t: number }> = ({ st, t
  */
 const UrlPill: React.FC<{ st: StudioStyle; url: string; t: number; fps: number }> = ({ st, url, t, fps }) => {
   const e = st.end;
-  const enter = spring({ frame: Math.max(0, (t - 0.45) * fps), fps, config: { damping: 11, stiffness: 150, mass: 0.7 } });
-  const typed = Math.max(0, Math.min(url.length, Math.floor((t - 0.75) * 20)));
-  const done = 0.75 + url.length / 20;
+  const enter = spring({ frame: Math.max(0, (t - 0.1) * fps), fps, config: { damping: 11, stiffness: 150, mass: 0.7 } });
+  const typed = Math.max(0, Math.min(url.length, Math.floor((t - 0.35) * 20)));
+  const done = 0.35 + url.length / 20;
   const arrowIn = spring({ frame: Math.max(0, (t - done) * fps), fps, config: { damping: 9, stiffness: 170, mass: 0.5 } });
   const loop = Math.max(0, t - done - 0.3);
   const ripple = (loop % 1.8) / 1.8; // 0..1
@@ -354,6 +356,19 @@ export const StudioEnd: React.FC<{ p: ReelProps; C: Palette; progress: number; t
   const accent = comma >= 0 ? p.subline.slice(comma + 1).trim() : p.subline;
   const [struck, ...restMuted] = muted.split(" ");
 
+  // One-time entrance, read top to bottom and settled in ~1.3 s (the voice starts at 0.25 s):
+  // logo → headline word by word → highlight word + marker sweep → "মুখস্থ" + strike sweep → rest → CTA.
+  const at = (start: number, dur = 0.35) => interpolate(t, [start, start + dur], [0, 1], { ...clamp, easing: ease });
+  const rise = (start: number, dist = 26) => {
+    const k = at(start);
+    return { opacity: k, transform: `translateY(${(1 - k) * dist}px)` };
+  };
+  const leadWords = lead.split(/\s+/).filter(Boolean);
+  const hlAt = 0.12 + leadWords.length * 0.06 + 0.12;
+  const hl = at(hlAt, 0.4);
+  const subAt = hlAt + 0.5;
+  const ctaAt = subAt + 0.45;
+
   return (
     <AbsoluteFill style={{ background: e.bg, opacity: progress }}>
       <Bubbles st={st} />
@@ -367,7 +382,7 @@ export const StudioEnd: React.FC<{ p: ReelProps; C: Palette; progress: number; t
       </div>
 
       <div style={{ position: "absolute", top: 270, left: 80, right: 80, display: "flex", flexDirection: "column", alignItems: "center" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 15 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 15, ...rise(0, 14) }}>
           <LogoMark size={64} C={C} reversed={st.reversedLogo} />
           <div style={{ fontSize: 44, lineHeight: 1, fontWeight: 700, color: C.wordmark, translate: "0px 4px" }}>নির্ণয়</div>
           {p.slogan ? (
@@ -379,10 +394,22 @@ export const StudioEnd: React.FC<{ p: ReelProps; C: Palette; progress: number; t
         </div>
 
         <div style={{ marginTop: 64, width: 800, display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center" }}>
-          <div style={{ fontSize: 88, lineHeight: 1.3, fontWeight: 700, color: e.copy }}>{lead}</div>
+          <div style={{ fontSize: 88, lineHeight: 1.3, fontWeight: 700, color: e.copy }}>
+            {leadWords.map((w, i) => (
+              <React.Fragment key={i}>
+                {i ? " " : null}
+                <span style={{ display: "inline-block", ...rise(0.12 + i * 0.06) }}>{w}</span>
+              </React.Fragment>
+            ))}
+          </div>
           {highlight ? (
-            <div style={{ position: "relative", marginTop: -2 }}>
-              <div style={{ position: "absolute", left: -4, right: -4, bottom: 15, height: 20, borderRadius: 7, backgroundColor: "#FBBF24", transform: "rotate(-0.8deg)" }} />
+            <div style={{ position: "relative", marginTop: -2, opacity: hl, transform: `scale(${0.88 + 0.12 * hl})` }}>
+              <div
+                style={{
+                  position: "absolute", left: -4, right: -4, bottom: 15, height: 20, borderRadius: 7, backgroundColor: "#FBBF24",
+                  transformOrigin: "left center", transform: `rotate(-0.8deg) scaleX(${at(hlAt + 0.25, 0.4)})`,
+                }}
+              />
               <div style={{ position: "relative", fontSize: 112, lineHeight: 1.3, fontWeight: 700, color: e.highlight }}>{highlight}</div>
             </div>
           ) : null}
@@ -390,20 +417,27 @@ export const StudioEnd: React.FC<{ p: ReelProps; C: Palette; progress: number; t
 
         <div style={{ marginTop: 36, display: "flex", alignItems: "center", gap: 18, fontSize: 42, lineHeight: 1.3, fontWeight: 600 }}>
           {muted ? (
-            <div style={{ color: e.muted, display: "flex", gap: 14 }}>
+            <div style={{ color: e.muted, display: "flex", gap: 14, ...rise(subAt, 18) }}>
               <span style={{ position: "relative" }}>
                 {struck}
-                <span style={{ position: "absolute", left: -4, right: -3, top: 24, height: 12, borderRadius: 3, backgroundColor: "#F59E0B", transform: "rotate(-3deg)" }} />
+                <span
+                  style={{
+                    position: "absolute", left: -4, right: -3, top: 24, height: 12, borderRadius: 3, backgroundColor: "#F59E0B",
+                    transformOrigin: "left center", transform: `rotate(-3deg) scaleX(${at(subAt + 0.2, 0.3)})`,
+                  }}
+                />
               </span>
               {restMuted.length ? <span>{restMuted.join(" ")}</span> : null}
             </div>
           ) : null}
-          <span style={{ color: e.accent }}>{accent}</span>
+          <span style={{ display: "inline-block", color: e.accent, ...rise(muted ? subAt + 0.4 : subAt, 18) }}>{accent}</span>
         </div>
 
         <div style={{ marginTop: 56, display: "flex", flexDirection: "column", alignItems: "center", gap: 24 }}>
-          <CtaLine st={st} text={p.ctaLine} t={t} />
-          <UrlPill st={st} url={p.ctaUrl} t={t} fps={fps} />
+          <div style={rise(ctaAt, 18)}>
+            <CtaLine st={st} text={p.ctaLine} t={t} />
+          </div>
+          <UrlPill st={st} url={p.ctaUrl} t={t - ctaAt} fps={fps} />
         </div>
       </div>
     </AbsoluteFill>
@@ -552,16 +586,16 @@ export const StudioThumbnail: React.FC<{ p: ReelProps; C: Palette }> = ({ p, C }
     <AbsoluteFill style={{ backgroundColor: C.canvas, color: C.ink }}>
       <Backdrop st={st} />
       {sz.roomForMascot ? (
-        <Niru st={st} top={1330} left={300} opacity={1}>
+        <Niru st={st} top={1370} left={300} spotTop={1310} opacity={1}>
           <Img src={niruThinking} style={{ width: 420, height: 420 }} />
         </Niru>
       ) : null}
       <div style={{ position: "absolute", top: 290, left: 72, right: 72, display: "flex", flexDirection: "column" }}>
         <Header C={C} st={st} />
-        <div style={{ marginTop: 30 }}>
+        <div style={{ marginTop: 34 }}>
           <Source C={C} st={st} act={p.act} source={p.source} />
         </div>
-        <div style={{ marginTop: 24, fontSize: sz.body, lineHeight: 1.42, fontWeight: 700 }}>{p.body}</div>
+        <div style={{ marginTop: 18, fontSize: sz.body, lineHeight: 1.42, fontWeight: 700 }}>{p.body}</div>
         <div style={{ marginTop: 40, display: "flex", flexDirection: "column", gap: 18 }}>
           {p.options.map((o, i) => (
             <OptionRow key={i} C={C} st={st} label={o.label} text={o.text} size={sz.option} />
