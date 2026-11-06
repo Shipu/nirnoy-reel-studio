@@ -2,18 +2,13 @@ import { Player, Thumbnail } from "@remotion/player";
 import { renderMediaOnWeb, renderStillOnWeb } from "@remotion/web-renderer";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  type RandomFilters,
-  type ReelLog,
   SEGMENT_LABELS,
   type TtsVoice,
   audioDuration,
   type ApiQuestion,
   diffQuestion,
   fetchQuestion,
-  fetchRandom,
-  fetchReels,
   fetchVoices,
-  logReel,
   saveQuestion,
   synthesize,
   narrationScripts,
@@ -24,24 +19,39 @@ import { MCQThumbnail } from "./remotion/MCQThumbnail";
 import { MUSIC, type MusicKey } from "./remotion/music";
 import { ClipPlayer } from "./ClipPlayer";
 import { startMic } from "./recorder";
-import { type ClipSource, deleteClip, loadClips, saveClip } from "./voiceStore";
-import { FPS, HEIGHT, type ReelProps, SEGMENTS, type SegmentKey, THEMES, type ThemeKey, WIDTH, themeOf, durationInFrames, hasExplanation } from "./remotion/types";
+import { type ReelRow, STATUS_LABEL, fromData, getReel, loadPrefs, mediaUrl, savePrefs, toData, updateReel, uploadMedia } from "./reels";
+import { navigate } from "./router";
+import { FPS, HEIGHT, type ReelProps, SEGMENTS, type SegmentKey, THEMES, type ThemeKey, type VoiceClip, WIDTH, themeOf, durationInFrames, hasExplanation } from "./remotion/types";
 
-const revokeAll = (p: ReelProps | null) => {
-  for (const clip of Object.values(p?.voice ?? {})) if (clip) URL.revokeObjectURL(clip.url);
+type ClipSource = NonNullable<VoiceClip["source"]>;
+
+const downloadBlob = (blob: Blob, name: string) => {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
 };
 
+const thumbnailBlob = async (props: ReelProps) => {
+  const { blob } = await renderStillOnWeb({
+    composition: { id: "MCQThumbnail", component: MCQThumbnail, durationInFrames: 1, fps: FPS, width: WIDTH, height: HEIGHT, defaultProps: props },
+    inputProps: props,
+    frame: 0,
+  });
+  return blob({ format: "jpeg", quality: 0.92 });
+};
 type Status = { kind: "idle" | "busy" | "error" | "ok"; text: string };
 
-export function App() {
-  const [idInput, setIdInput] = useState("");
-  const [filters, setFilters] = useState<RandomFilters>({ exam_name: "bar_council", year: "", topic_id: "", skip_used: true });
+/** One reel draft: loads it, autosaves every change, keeps voice clips and the render in R2. */
+export function Editor({ reelId }: { reelId: number }) {
+  const [reel, setReel] = useState<ReelRow | null>(null);
   const [props, setProps] = useState<ReelProps | null>(null);
   const [original, setOriginal] = useState<ApiQuestion | null>(null);
   const [status, setStatus] = useState<Status>({ kind: "idle", text: "" });
   const [view, setView] = useState<"video" | "thumbnail">("video");
   const [progress, setProgress] = useState<number | null>(null);
-  const [reels, setReels] = useState<ReelLog[]>([]);
   const abortRef = useRef<AbortController | null>(null);
   const [scripts, setScripts] = useState<Record<SegmentKey, string> | null>(null);
   const [voices, setVoices] = useState<TtsVoice[]>([]);
@@ -49,9 +59,7 @@ export function App() {
   const [rate, setRate] = useState(-5);
   const [voiceBusy, setVoiceBusy] = useState(false);
 
-  const refreshReels = () => fetchReels().then(setReels).catch(() => undefined);
   useEffect(() => {
-    refreshReels();
     fetchVoices()
       .then((r) => {
         setVoices(r.voices);
@@ -60,31 +68,67 @@ export function App() {
       .catch(() => undefined);
   }, []);
 
-  const load = async (fn: () => Promise<Parameters<typeof toReelProps>[0]>) => {
-    setStatus({ kind: "busy", text: "প্রশ্ন আনছি…" });
-    try {
-      const q = await fn();
-      const next = toReelProps(q);
-      setProps((old) => {
-        revokeAll(old);
-        return old ? { ...next, theme: old.theme, music: old.music, sfx: old.sfx } : next;
-      });
-      setOriginal(q);
-      setScripts(narrationScripts(next));
-      setIdInput(String(q.id));
-      const saved = await loadClips(q.id).catch(() => []);
-      for (const c of saved) {
-        const url = URL.createObjectURL(c.blob);
-        setProps((p) => (p && p.questionId === q.id ? { ...p, voice: { ...p.voice, [c.segment]: { url, sec: c.sec, source: c.source } } } : p));
+  // Open the draft. Rows from before drafts existed (only a question id) are rebuilt from the question.
+  const [ready, setReady] = useState(false);
+  const hadData = useRef(false);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setStatus({ kind: "busy", text: "Reel খুলছি…" });
+      try {
+        const row = await getReel(reelId);
+        const q = await fetchQuestion(row.question_id).catch(() => null);
+        if (cancelled) return;
+        setReel(row);
+        setOriginal(q);
+        hadData.current = row.data !== null;
+        if (row.data) {
+          const p = fromData(reelId, row.data);
+          setProps(p);
+          setScripts(row.data.scripts ?? narrationScripts(p));
+        } else if (q) {
+          const p = { ...toReelProps(q), ...loadPrefs() };
+          setProps(p);
+          setScripts(narrationScripts(p));
+        } else {
+          throw new Error(`প্রশ্ন #${row.question_id} আনা গেল না।`);
+        }
+        setReady(true);
+        setStatus({ kind: "ok", text: `Reel #${reelId} (প্রশ্ন #${row.question_id}) খোলা হয়েছে। যা বদলাবেন নিজে থেকে সেভ হবে।` });
+      } catch (e) {
+        if (!cancelled) setStatus({ kind: "error", text: (e as Error).message });
       }
-      setStatus({
-        kind: "ok",
-        text: `প্রশ্ন #${q.id} লোড হয়েছে।${saved.length ? ` আগের ${saved.length}টি voice ফিরিয়ে আনা হয়েছে।` : ""} লেখা দেখে নিন, দরকার হলে ঠিক করুন।`,
-      });
-    } catch (e) {
-      setStatus({ kind: "error", text: (e as Error).message });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [reelId]);
+
+  // Autosave: every change is written to the draft shortly after you stop typing.
+  const [saveState, setSaveState] = useState<"saved" | "saving" | "error">("saved");
+  const firstSave = useRef(true);
+  useEffect(() => {
+    if (!ready || !props) return;
+    if (firstSave.current) {
+      firstSave.current = false;
+      if (hadData.current) return; // just loaded, nothing new to write
     }
-  };
+    setSaveState("saving");
+    const id = setTimeout(() => {
+      updateReel(reelId, { data: toData(props, scripts) })
+        .then((row) => {
+          setReel((r) => (r ? { ...r, ...row } : r));
+          setSaveState("saved");
+        })
+        .catch(() => setSaveState("error"));
+    }, 800);
+    return () => clearTimeout(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props, scripts, ready]);
+
+  useEffect(() => {
+    if (props) savePrefs(props);
+  }, [props?.theme, props?.music, props?.sfx]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const edit = useMemo(() => (props && original && props.questionId === original.id ? diffQuestion(original, props) : null), [props, original]);
 
@@ -119,15 +163,14 @@ export function App() {
         onProgress: (p) => setProgress(p.progress),
       });
       const blob = await getBlob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `nirnoy-reel-q${props.questionId}.mp4`;
-      a.click();
-      setTimeout(() => URL.revokeObjectURL(url), 60_000);
-      await logReel(props.questionId).catch(() => undefined);
-      refreshReels();
-      setStatus({ kind: "ok", text: `Download হয়েছে: nirnoy-reel-q${props.questionId}.mp4` });
+      downloadBlob(blob, `nirnoy-reel-${reelId}-q${props.questionId}.mp4`);
+      // Keep the render with the reel so it can be downloaded or posted later without rendering again.
+      setStatus({ kind: "busy", text: "Video আর thumbnail reel-এ জমা রাখছি…" });
+      await uploadMedia(reelId, blob, { file: "video.mp4" });
+      await uploadMedia(reelId, await thumbnailBlob(props), { file: "thumb.jpg" });
+      const row = await updateReel(reelId, reel?.status === "published" ? {} : { status: "rendered" });
+      setReel((r) => (r ? { ...r, ...row } : r));
+      setStatus({ kind: "ok", text: `Download হয়েছে, আর reel-এ জমা আছে (তালিকা থেকে আবার নামানো যাবে)।` });
     } catch (e) {
       setStatus({ kind: "error", text: controller.signal.aborted ? "বাতিল করা হয়েছে।" : `Render ব্যর্থ: ${(e as Error).message}` });
     } finally {
@@ -140,18 +183,10 @@ export function App() {
     if (!props) return;
     setStatus({ kind: "busy", text: "Thumbnail বানাচ্ছি…" });
     try {
-      const { blob } = await renderStillOnWeb({
-        composition: { id: "MCQThumbnail", component: MCQThumbnail, durationInFrames: 1, fps: FPS, width: WIDTH, height: HEIGHT, defaultProps: props },
-        inputProps: props,
-        frame: 0,
-      });
-      const url = URL.createObjectURL(await blob({ format: "jpeg", quality: 0.92 }));
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `nirnoy-thumbnail-q${props.questionId}.jpg`;
-      a.click();
-      setTimeout(() => URL.revokeObjectURL(url), 60_000);
-      setStatus({ kind: "ok", text: `Download হয়েছে: nirnoy-thumbnail-q${props.questionId}.jpg` });
+      const blob = await thumbnailBlob(props);
+      downloadBlob(blob, `nirnoy-thumbnail-${reelId}-q${props.questionId}.jpg`);
+      await uploadMedia(reelId, blob, { file: "thumb.jpg" }).catch(() => undefined);
+      setStatus({ kind: "ok", text: `Download হয়েছে: nirnoy-thumbnail-${reelId}-q${props.questionId}.jpg` });
     } catch (e) {
       setStatus({ kind: "error", text: `Thumbnail ব্যর্থ: ${(e as Error).message}` });
     }
@@ -159,22 +194,12 @@ export function App() {
 
   const activeSegments = (p: ReelProps) => SEGMENTS.filter((k) => k !== "explanation" || hasExplanation(p));
 
-  /** Puts a clip on a segment and keeps a copy in the browser (unless it just came from there). */
-  const attachClip = async (key: SegmentKey, blob: Blob, source: ClipSource, persist = true) => {
-    const url = URL.createObjectURL(blob);
-    const sec = await audioDuration(url);
-    const questionId = props?.questionId;
-    setProps((p) => {
-      if (!p) return p;
-      const old = p.voice[key];
-      if (old) URL.revokeObjectURL(old.url);
-      return { ...p, voice: { ...p.voice, [key]: { url, sec, source } } };
-    });
-    if (persist && questionId !== undefined) {
-      await saveClip(questionId, { segment: key, blob, sec, source }).catch(() =>
-        setStatus({ kind: "error", text: "Voice browser-এ সেভ করা গেল না (storage ভরা বা private mode?)। এই tab বন্ধ না করা পর্যন্ত থাকবে।" }),
-      );
-    }
+  /** Uploads a clip to the reel's folder in R2 and puts it on the segment (autosave records it). */
+  const attachClip = async (key: SegmentKey, blob: Blob, source: ClipSource) => {
+    const local = URL.createObjectURL(blob);
+    const sec = await audioDuration(local).finally(() => URL.revokeObjectURL(local));
+    const file = await uploadMedia(reelId, blob, { segment: key });
+    setProps((p) => (p ? { ...p, voice: { ...p.voice, [key]: { url: mediaUrl(reelId, file), sec, source, file } } } : p));
     return sec;
   };
 
@@ -237,18 +262,8 @@ export function App() {
     }
   };
 
-  const removeClip = (key?: SegmentKey) =>
-    setProps((p) => {
-      if (!p) return p;
-      for (const k of key ? [key] : SEGMENTS) void deleteClip(p.questionId, k).catch(() => undefined);
-      if (!key) {
-        revokeAll(p);
-        return { ...p, voice: {} };
-      }
-      const old = p.voice[key];
-      if (old) URL.revokeObjectURL(old.url);
-      return { ...p, voice: { ...p.voice, [key]: null } };
-    });
+  /** Takes a clip off (or all clips); the next autosave deletes the files from R2. */
+  const removeClip = (key?: SegmentKey) => setProps((p) => (p ? { ...p, voice: key ? { ...p.voice, [key]: null } : {} } : p));
 
   const set = <K extends keyof ReelProps>(key: K, value: ReelProps[K]) => setProps((p) => (p ? { ...p, [key]: value } : p));
   const busy = status.kind === "busy";
@@ -260,36 +275,19 @@ export function App() {
           নির্ণয় <span>Reel Studio</span>
         </h1>
 
-        <section>
-          <h2>প্রশ্ন বাছাই</h2>
-          <div className="row">
-            <input inputMode="numeric" placeholder="Question ID" value={idInput} onChange={(e) => setIdInput(e.target.value.replace(/\D/g, ""))} />
-            <button disabled={busy || !idInput} onClick={() => load(() => fetchQuestion(Number(idInput)))}>
-              আনুন
-            </button>
-          </div>
-          <div className="grid">
-            <label>
-              পরীক্ষা (exam_name)
-              <input value={filters.exam_name} onChange={(e) => setFilters({ ...filters, exam_name: e.target.value.trim() })} />
-            </label>
-            <label>
-              সাল (year)
-              <input value={filters.year} placeholder="যেমন 2023" onChange={(e) => setFilters({ ...filters, year: e.target.value.trim() })} />
-            </label>
-            <label>
-              Topic ID
-              <input value={filters.topic_id} onChange={(e) => setFilters({ ...filters, topic_id: e.target.value.replace(/\D/g, "") })} />
-            </label>
-          </div>
-          <label className="check">
-            <input type="checkbox" checked={filters.skip_used} onChange={(e) => setFilters({ ...filters, skip_used: e.target.checked })} />
-            আগে বানানো প্রশ্ন বাদ দিন
-          </label>
-          <button className="secondary" disabled={busy} onClick={() => load(() => fetchRandom(filters))}>
-            Random প্রশ্ন
+        <div className="editor-head">
+          <button className="link" onClick={() => navigate("/")}>
+            ← সব reel
           </button>
-        </section>
+          <span className={`save-state ${saveState}`}>
+            {saveState === "saving" ? "সেভ হচ্ছে…" : saveState === "error" ? "সেভ হয়নি — আবার চেষ্টা করবে" : "সেভ হয়েছে ✓"}
+          </span>
+        </div>
+        {reel ? (
+          <p className="muted reel-meta">
+            Reel #{reel.id} · প্রশ্ন #{reel.question_id} · <span className={`chip ${reel.status}`}>{STATUS_LABEL[reel.status]}</span>
+          </p>
+        ) : null}
 
         {props ? (
           <section className="groups">
@@ -490,20 +488,6 @@ export function App() {
 
         {status.text ? <p className={`status ${status.kind}`}>{status.text}</p> : null}
 
-        <section>
-          <h2>সাম্প্রতিক reel</h2>
-          {reels.length === 0 ? <p className="muted">এখনো কোনো reel নেই।</p> : null}
-          <ul className="reels">
-            {reels.map((r) => (
-              <li key={r.id}>
-                <button className="link" onClick={() => load(() => fetchQuestion(r.question_id))}>
-                  #{r.question_id}
-                </button>
-                <span>{r.created_at} UTC</span>
-              </li>
-            ))}
-          </ul>
-        </section>
       </aside>
 
       <main className="stage">
@@ -567,7 +551,7 @@ export function App() {
             </div>
           </>
         ) : (
-          <div className="empty">বাঁ দিক থেকে একটি প্রশ্ন আনুন।</div>
+          <div className="empty">{status.kind === "error" ? status.text : "Reel খুলছি…"}</div>
         )}
       </main>
     </div>

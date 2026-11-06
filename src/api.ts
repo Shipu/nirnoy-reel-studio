@@ -105,13 +105,6 @@ export function diffQuestion(original: ApiQuestion, p: ReelProps): QuestionEdit 
   return Object.keys(edit).length ? edit : null;
 }
 
-export type ReelLog = { id: number; question_id: number; rendered_by: string | null; created_at: string };
-
-export const fetchReels = () => request<{ data: ReelLog[] }>("/api/reels").then((r) => r.data);
-
-export const logReel = (questionId: number) =>
-  request("/api/reels", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ question_id: questionId }) });
-
 /** Turns on-screen text into speakable text: blanks become a pause. */
 const speakable = (text: string) =>
   text

@@ -3,6 +3,8 @@ import { createRemoteJWKSet, jwtVerify } from "jose";
 export interface Env {
   ASSETS: Fetcher;
   DB: D1Database;
+  /** Voice clips, rendered MP4s and thumbnails, under reels/<id>/. */
+  MEDIA: R2Bucket;
   NIRNOY_API_BASE: string;
   REEL_API_KEY: string;
   ACCESS_TEAM_DOMAIN?: string;
@@ -166,6 +168,209 @@ async function upstream(env: Env, path: string, params?: URLSearchParams, init?:
   });
 }
 
+// ---- Reels: drafts you can come back to, with their media in R2 ----
+
+type ReelData = { props?: { body?: string }; voice?: Record<string, { file?: string } | null>; scripts?: unknown };
+type ReelRow = {
+  id: number;
+  question_id: number;
+  status: string;
+  title: string | null;
+  data: string | null;
+  created_by: string | null;
+  updated_by: string | null;
+  created_at: string;
+  updated_at: string | null;
+  rendered_at: string | null;
+  youtube_url: string | null;
+};
+
+const STATUSES = ["draft", "rendered", "published"];
+const LIST_COLUMNS = "id, question_id, status, title, created_by, updated_by, created_at, updated_at, rendered_at, youtube_url";
+const prefix = (id: number) => `reels/${id}/`;
+const voiceFiles = (data: ReelData | null) =>
+  new Set(Object.values(data?.voice ?? {}).flatMap((v) => (v?.file ? [v.file] : [])));
+const parseData = (raw: string | null): ReelData | null => {
+  try {
+    return raw ? (JSON.parse(raw) as ReelData) : null;
+  } catch {
+    return null;
+  }
+};
+const titleOf = (data: ReelData | null) => (data?.props?.body ?? "").replace(/\s+/g, " ").trim().slice(0, 120) || null;
+/** Only plain file names under a reel's folder, never paths. */
+const SAFE_FILE = /^[a-z0-9][a-z0-9._-]{0,80}$/;
+const EXT: Record<string, string> = {
+  "audio/wav": "wav", "audio/x-wav": "wav", "audio/wave": "wav", "audio/mpeg": "mp3", "audio/mp4": "m4a", "audio/x-m4a": "m4a",
+  "audio/webm": "webm", "audio/ogg": "ogg", "video/mp4": "mp4", "image/jpeg": "jpg", "image/png": "png",
+};
+
+async function deleteFolder(env: Env, id: number) {
+  let cursor: string | undefined;
+  do {
+    const list = await env.MEDIA.list({ prefix: prefix(id), cursor });
+    if (list.objects.length) await env.MEDIA.delete(list.objects.map((o) => o.key));
+    cursor = list.truncated ? list.cursor : undefined;
+  } while (cursor);
+}
+
+async function reels(request: Request, env: Env, url: URL, user: string): Promise<Response> {
+  const path = url.pathname.replace(/\/+$/, "");
+  const now = new Date().toISOString().replace("T", " ").slice(0, 19);
+
+  if (path === "/api/reels" && request.method === "GET") {
+    const where: string[] = [];
+    const binds: unknown[] = [];
+    const status = url.searchParams.get("status");
+    if (status && STATUSES.includes(status)) {
+      where.push("status = ?");
+      binds.push(status);
+    }
+    const q = Number(url.searchParams.get("question_id"));
+    if (Number.isInteger(q) && q > 0) {
+      where.push("question_id = ?");
+      binds.push(q);
+    }
+    const { results } = await env.DB.prepare(
+      `SELECT ${LIST_COLUMNS} FROM reels ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY COALESCE(updated_at, created_at) DESC, id DESC LIMIT 200`,
+    )
+      .bind(...binds)
+      .all<ReelRow>();
+    return json({ data: results });
+  }
+
+  if (path === "/api/reels" && request.method === "POST") {
+    const body = (await request.json().catch(() => null)) as { question_id?: unknown; data?: ReelData } | null;
+    const questionId = Number(body?.question_id);
+    if (!Number.isInteger(questionId) || questionId <= 0) return json({ message: "question_id is required." }, 422);
+    const data = body?.data ?? null;
+    const row = await env.DB.prepare(
+      `INSERT INTO reels (question_id, status, title, data, created_by, updated_by, rendered_by, created_at, updated_at)
+       VALUES (?, 'draft', ?, ?, ?, ?, ?, ?, ?) RETURNING ${LIST_COLUMNS}`,
+    )
+      .bind(questionId, titleOf(data), data ? JSON.stringify(data) : null, user, user, user, now, now)
+      .first<ReelRow>();
+    return json({ data: row }, 201);
+  }
+
+  const m = path.match(/^\/api\/reels\/(\d+)(?:\/(duplicate|media)(?:\/([^/]+))?)?$/);
+  if (!m) return json({ message: "Not found." }, 404);
+  const id = Number(m[1]);
+  const existing = await env.DB.prepare("SELECT * FROM reels WHERE id = ?").bind(id).first<ReelRow>();
+  if (!existing) return json({ message: "Reel not found." }, 404);
+
+  if (!m[2]) {
+    if (request.method === "GET") return json({ data: { ...existing, data: parseData(existing.data) } });
+
+    if (request.method === "PATCH") {
+      const body = (await request.json().catch(() => null)) as { data?: ReelData; status?: string; youtube_url?: string | null } | null;
+      if (!body) return json({ message: "Invalid JSON." }, 422);
+      const sets: string[] = ["updated_at = ?", "updated_by = ?"];
+      const binds: unknown[] = [now, user];
+      if (body.data) {
+        sets.push("data = ?", "title = ?");
+        binds.push(JSON.stringify(body.data), titleOf(body.data));
+        // Voice clips that are no longer used by the draft are removed from R2.
+        const keep = voiceFiles(body.data);
+        const gone = [...voiceFiles(parseData(existing.data))].filter((f) => !keep.has(f));
+        if (gone.length) await env.MEDIA.delete(gone.map((f) => prefix(id) + f));
+      }
+      if (body.status !== undefined) {
+        if (!STATUSES.includes(body.status)) return json({ message: "Unknown status." }, 422);
+        sets.push("status = ?");
+        binds.push(body.status);
+        if (body.status === "rendered") {
+          sets.push("rendered_at = ?");
+          binds.push(now);
+        }
+      }
+      if (body.youtube_url !== undefined) {
+        sets.push("youtube_url = ?");
+        binds.push(body.youtube_url || null);
+      }
+      const row = await env.DB.prepare(`UPDATE reels SET ${sets.join(", ")} WHERE id = ? RETURNING ${LIST_COLUMNS}`)
+        .bind(...binds, id)
+        .first<ReelRow>();
+      return json({ data: row });
+    }
+
+    if (request.method === "DELETE") {
+      await deleteFolder(env, id);
+      await env.DB.prepare("DELETE FROM reels WHERE id = ?").bind(id).run();
+      return json({ ok: true });
+    }
+  }
+
+  // A new draft with the same settings and voice clips (the render is not copied).
+  if (m[2] === "duplicate" && request.method === "POST") {
+    const data = parseData(existing.data);
+    const row = await env.DB.prepare(
+      `INSERT INTO reels (question_id, status, title, data, created_by, updated_by, rendered_by, created_at, updated_at)
+       VALUES (?, 'draft', ?, ?, ?, ?, ?, ?, ?) RETURNING ${LIST_COLUMNS}`,
+    )
+      .bind(existing.question_id, existing.title, existing.data, user, user, user, now, now)
+      .first<ReelRow>();
+    if (row) {
+      for (const file of voiceFiles(data)) {
+        const obj = await env.MEDIA.get(prefix(id) + file);
+        if (obj) await env.MEDIA.put(prefix(row.id) + file, await obj.arrayBuffer(), { httpMetadata: obj.httpMetadata });
+      }
+    }
+    return json({ data: row }, 201);
+  }
+
+  if (m[2] === "media") {
+    const file = m[3];
+    // Upload: PUT /media/video.mp4 (fixed name) or PUT /media?name=voice-cta (a fresh versioned name is returned).
+    if (request.method === "PUT") {
+      const type = (request.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
+      const ext = EXT[type];
+      if (!ext) return json({ message: `Unsupported file type: ${type || "none"}.` }, 415);
+      let name = file;
+      if (!name) {
+        const base = (url.searchParams.get("name") ?? "").toLowerCase();
+        if (!/^voice-[a-z]+$/.test(base)) return json({ message: "name must look like voice-<segment>." }, 422);
+        name = `${base}-${Date.now().toString(36)}.${ext}`;
+      }
+      if (!SAFE_FILE.test(name)) return json({ message: "Bad file name." }, 422);
+      if (!request.body) return json({ message: "Empty body." }, 422);
+      await env.MEDIA.put(prefix(id) + name, request.body, { httpMetadata: { contentType: type } });
+      return json({ file: name }, 201);
+    }
+
+    if (!file || !SAFE_FILE.test(file)) return json({ message: "Bad file name." }, 422);
+
+    if (request.method === "GET") {
+      const obj = await env.MEDIA.get(prefix(id) + file, { range: request.headers, onlyIf: request.headers });
+      if (!obj) return json({ message: "File not found." }, 404);
+      const headers = new Headers();
+      obj.writeHttpMetadata(headers);
+      headers.set("etag", obj.httpEtag);
+      headers.set("accept-ranges", "bytes");
+      headers.set("cache-control", "private, max-age=3600");
+      if (url.searchParams.get("download")) headers.set("content-disposition", `attachment; filename="nirnoy-reel-${id}-${file}"`);
+      if (!("body" in obj)) return new Response(null, { status: 304, headers });
+      const range = obj.range as { offset?: number; length?: number } | undefined;
+      if (range && request.headers.has("range")) {
+        const start = range.offset ?? 0;
+        const end = start + (range.length ?? obj.size - start) - 1;
+        headers.set("content-range", `bytes ${start}-${end}/${obj.size}`);
+        headers.set("content-length", String(end - start + 1));
+        return new Response(obj.body, { status: 206, headers });
+      }
+      headers.set("content-length", String(obj.size));
+      return new Response(obj.body, { headers });
+    }
+
+    if (request.method === "DELETE") {
+      await env.MEDIA.delete(prefix(id) + file);
+      return json({ ok: true });
+    }
+  }
+
+  return json({ message: "Not found." }, 404);
+}
+
 const FORWARDED = ["exam_name", "year", "topic_id", "include_subtopics", "require_explanation"] as const;
 
 export default {
@@ -189,7 +394,9 @@ export default {
         if (value) params.set(key, value);
       }
       if (url.searchParams.get("skip_used") !== "0") {
-        const { results } = await env.DB.prepare("SELECT DISTINCT question_id FROM reels ORDER BY question_id LIMIT 1000").all<{
+        const { results } = await env.DB.prepare(
+          "SELECT DISTINCT question_id FROM reels WHERE status != 'draft' ORDER BY question_id LIMIT 1000",
+        ).all<{
           question_id: number;
         }>();
         if (results.length) params.set("exclude_ids", results.map((r) => r.question_id).join(","));
@@ -208,20 +415,7 @@ export default {
       return upstream(env, `/questions/${match[1]}`, undefined, { method: "PATCH", body: JSON.stringify(edit) });
     }
 
-    if (url.pathname === "/api/reels" && request.method === "GET") {
-      const { results } = await env.DB.prepare(
-        "SELECT id, question_id, rendered_by, created_at FROM reels ORDER BY id DESC LIMIT 50",
-      ).all();
-      return json({ data: results });
-    }
-
-    if (url.pathname === "/api/reels" && request.method === "POST") {
-      const body = (await request.json().catch(() => null)) as { question_id?: unknown } | null;
-      const questionId = Number(body?.question_id);
-      if (!Number.isInteger(questionId) || questionId <= 0) return json({ message: "question_id is required." }, 422);
-      await env.DB.prepare("INSERT INTO reels (question_id, rendered_by) VALUES (?, ?)").bind(questionId, user).run();
-      return json({ ok: true }, 201);
-    }
+    if (url.pathname.startsWith("/api/reels")) return reels(request, env, url, user);
 
     return json({ message: "Not found." }, 404);
   },
