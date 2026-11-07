@@ -128,3 +128,14 @@ button.link.danger { color: var(--danger); margin-left: auto; }
 .save-state.saving { color: var(--ink-2); }
 .save-state.error { color: var(--danger); }
 .reel-meta { margin: 0 0 8px; }
+
+/* ---- Captions ---- */
+.caption-tabs { display: flex; flex-wrap: wrap; gap: 6px; }
+.caption-tabs button { padding: 5px 10px; font-size: 13px; }
+small.over { color: var(--danger); font-weight: 600; }
+.caption-menu { position: relative; }
+.caption-menu > summary { list-style: none; cursor: pointer; display: inline-block; }
+.caption-menu > summary::-webkit-details-marker { display: none; }
+.caption-menu-list { position: absolute; z-index: 5; top: calc(100% + 4px); left: 0; display: flex; flex-direction: column; gap: 4px; padding: 8px; background: #fff; border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 8px 24px rgba(22, 20, 43, 0.12); min-width: 190px; }
+.caption-menu-list button { text-align: left; }
+.caption-field { display: flex; flex-direction: column; gap: 6px; }

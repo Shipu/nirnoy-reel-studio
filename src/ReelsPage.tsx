@@ -13,8 +13,8 @@ import {
   mediaUrl,
   toData,
   updateReel,
-  youtubeText,
 } from "./reels";
+import { PLATFORMS, PLATFORM_INFO, type Platform, captionsFor } from "./captions";
 import { navigate } from "./router";
 
 type Status = { kind: "idle" | "busy" | "error" | "ok"; text: string };
@@ -80,12 +80,12 @@ export function ReelsPage() {
     }
   };
 
-  const copyYoutube = async (r: ReelRow, part: "title" | "description") => {
+  const copyCaption = async (r: ReelRow, platform: Platform) => {
     try {
       const full = await getReel(r.id);
       if (!full.data) throw new Error("এই reel-এ লেখা জমা নেই — একবার খুলে নিন।");
-      await navigator.clipboard.writeText(youtubeText(full.data.props)[part]);
-      setStatus({ kind: "ok", text: part === "title" ? "YouTube title কপি হয়েছে।" : "YouTube description কপি হয়েছে।" });
+      await navigator.clipboard.writeText(captionsFor(full.data.props, full.data.captions)[platform]);
+      setStatus({ kind: "ok", text: `Reel #${r.id}: ${PLATFORM_INFO[platform].label} caption কপি হয়েছে।` });
     } catch (e) {
       setStatus({ kind: "error", text: (e as Error).message });
     }
@@ -217,16 +217,29 @@ export function ReelsPage() {
                     <a className="btn secondary" href={`${mediaUrl(r.id, "thumb.jpg")}?download=1`}>
                       Thumbnail
                     </a>
-                    <button className="secondary" onClick={() => copyYoutube(r, "title")}>
-                      YT title কপি
-                    </button>
-                    <button className="secondary" onClick={() => copyYoutube(r, "description")}>
-                      YT description কপি
-                    </button>
                     <button className="secondary" onClick={() => markPublished(r)}>
                       {r.status === "published" ? "YouTube link বদলান" : "YouTube-এ দিয়েছি"}
                     </button>
                   </>
+                ) : null}
+                {r.title ? (
+                  <details className="caption-menu">
+                    <summary className="btn secondary">ক্যাপশন কপি ▾</summary>
+                    <div className="caption-menu-list">
+                      {PLATFORMS.map((k) => (
+                        <button
+                          key={k}
+                          className="secondary"
+                          onClick={(e) => {
+                            void copyCaption(r, k);
+                            (e.currentTarget.closest("details") as HTMLDetailsElement | null)?.removeAttribute("open");
+                          }}
+                        >
+                          {PLATFORM_INFO[k].label}
+                        </button>
+                      ))}
+                    </div>
+                  </details>
                 ) : null}
                 <button
                   className="link danger"

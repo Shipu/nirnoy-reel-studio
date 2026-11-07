@@ -1,3 +1,4 @@
+import type { Captions } from "./captions";
 import type { ReelProps, SegmentKey, VoiceClip } from "./remotion/types";
 
 /** A reel as stored by the Worker (D1 row + optional studio state). */
@@ -21,6 +22,8 @@ export type ReelData = {
   props: Omit<ReelProps, "voice">;
   voice: Partial<Record<SegmentKey, StoredVoice | null>>;
   scripts: Record<SegmentKey, string> | null;
+  /** Per-platform post text you edited; missing platforms use the generated caption. */
+  captions?: Partial<Captions>;
 };
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -60,13 +63,13 @@ export async function uploadMedia(id: number, blob: Blob, target: { segment: Seg
   return request<{ file: string }>(path, { method: "PUT", headers: { "content-type": type }, body: blob }).then((r) => r.file);
 }
 
-export const toData = (p: ReelProps, scripts: Record<SegmentKey, string> | null): ReelData => {
+export const toData = (p: ReelProps, scripts: Record<SegmentKey, string> | null, captions: Partial<Captions> = {}): ReelData => {
   const { voice, ...props } = p;
   const stored: ReelData["voice"] = {};
   for (const [k, v] of Object.entries(voice) as [SegmentKey, VoiceClip | null | undefined][]) {
     if (v?.file) stored[k] = { file: v.file, sec: v.sec, source: v.source };
   }
-  return { props, voice: stored, scripts };
+  return { props, voice: stored, scripts, captions };
 };
 
 export const fromData = (id: number, d: ReelData): ReelProps => {
@@ -90,18 +93,3 @@ export const savePrefs = (p: Pick<ReelProps, "theme" | "music" | "sfx">) =>
   localStorage.setItem(PREFS, JSON.stringify({ theme: p.theme, music: p.music, sfx: p.sfx }));
 
 export const STATUS_LABEL: Record<ReelStatus, string> = { draft: "খসড়া", rendered: "তৈরি", published: "প্রকাশিত" };
-
-/** YouTube Shorts title (≤100 chars) and description for a manual upload. */
-export function youtubeText(p: Omit<ReelProps, "voice">) {
-  const body = p.body.replace(/\s+/g, " ").trim();
-  const head = "আজকের MCQ: ";
-  const room = 100 - head.length - " #Shorts".length;
-  const title = `${head}${body.length > room ? `${body.slice(0, room - 1)}…` : body} #Shorts`;
-  const options = p.options.map((o) => `${o.label}) ${o.text}`).join("\n");
-  const tags = ["#Shorts", "#MCQ", "#নির্ণয়", ...(p.act ? [`#${p.act.split(/[,،]/)[0].trim().replace(/\s+/g, "")}`] : [])];
-  const description = [body, "", options, "", "আপনার উত্তর কমেন্টে লিখুন — সঠিক উত্তর ও ব্যাখ্যা ভিডিওতে।", p.source ? `উৎস: ${p.source}` : "", "", `${p.ctaLine} 👉 ${p.ctaUrl}`, "", tags.join(" ")]
-    .filter((l, i, a) => !(l === "" && a[i - 1] === ""))
-    .join("\n")
-    .trim();
-  return { title, description };
-}

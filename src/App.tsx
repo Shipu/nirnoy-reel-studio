@@ -21,6 +21,7 @@ import { ClipPlayer } from "./ClipPlayer";
 import { startMic } from "./recorder";
 import { type ReelRow, STATUS_LABEL, fromData, getReel, loadPrefs, mediaUrl, savePrefs, toData, updateReel, uploadMedia } from "./reels";
 import { navigate } from "./router";
+import { CAPTION_TABS, type CaptionTab, type Captions, PLATFORM_INFO, type Platform, captionLength, generateCaptions } from "./captions";
 import { FPS, HEIGHT, type ReelProps, SEGMENTS, type SegmentKey, THEMES, type ThemeKey, type VoiceClip, WIDTH, themeOf, durationInFrames, hasExplanation } from "./remotion/types";
 
 type ClipSource = NonNullable<VoiceClip["source"]>;
@@ -54,6 +55,9 @@ export function Editor({ reelId }: { reelId: number }) {
   const [progress, setProgress] = useState<number | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const [scripts, setScripts] = useState<Record<SegmentKey, string> | null>(null);
+  /** Captions you edited for this reel; the rest follow the question automatically. */
+  const [captionEdits, setCaptionEdits] = useState<Partial<Captions>>({});
+  const [captionTab, setCaptionTab] = useState<CaptionTab>("facebook");
   const [voices, setVoices] = useState<TtsVoice[]>([]);
   const [voice, setVoice] = useState<string>("");
   const [rate, setRate] = useState(-5);
@@ -86,6 +90,7 @@ export function Editor({ reelId }: { reelId: number }) {
           const p = fromData(reelId, row.data);
           setProps(p);
           setScripts(row.data.scripts ?? narrationScripts(p));
+          setCaptionEdits(row.data.captions ?? {});
         } else if (q) {
           const p = { ...toReelProps(q), ...loadPrefs() };
           setProps(p);
@@ -115,7 +120,7 @@ export function Editor({ reelId }: { reelId: number }) {
     }
     setSaveState("saving");
     const id = setTimeout(() => {
-      updateReel(reelId, { data: toData(props, scripts) })
+      updateReel(reelId, { data: toData(props, scripts, captionEdits) })
         .then((row) => {
           setReel((r) => (r ? { ...r, ...row } : r));
           setSaveState("saved");
@@ -124,7 +129,7 @@ export function Editor({ reelId }: { reelId: number }) {
     }, 800);
     return () => clearTimeout(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [props, scripts, ready]);
+  }, [props, scripts, captionEdits, ready]);
 
   useEffect(() => {
     if (props) savePrefs(props);
@@ -264,6 +269,13 @@ export function Editor({ reelId }: { reelId: number }) {
 
   /** Takes a clip off (or all clips); the next autosave deletes the files from R2. */
   const removeClip = (key?: SegmentKey) => setProps((p) => (p ? { ...p, voice: key ? { ...p.voice, [key]: null } : {} } : p));
+
+  const generated = useMemo(() => (props ? generateCaptions(props) : null), [props]);
+  const copyCaption = async (platform: Platform) => {
+    if (!generated) return;
+    await navigator.clipboard.writeText(captionEdits[platform] ?? generated[platform]);
+    setStatus({ kind: "ok", text: `${PLATFORM_INFO[platform].label} caption কপি হয়েছে।` });
+  };
 
   const set = <K extends keyof ReelProps>(key: K, value: ReelProps[K]) => setProps((p) => (p ? { ...p, [key]: value } : p));
   const busy = status.kind === "busy";
@@ -483,6 +495,63 @@ export function Editor({ reelId }: { reelId: number }) {
                 </div>
               </div>
             </details>
+            {generated ? (
+              <details className="group">
+                <summary>
+                  ক্যাপশন <small>Facebook · Instagram · LinkedIn · TikTok · X · YouTube</small>
+                </summary>
+                <div className="group-body">
+                  <div className="caption-tabs">
+                    {CAPTION_TABS.map((t) => (
+                      <button key={t.key} className={captionTab === t.key ? "" : "secondary"} onClick={() => setCaptionTab(t.key)}>
+                        {t.label}
+                        {t.fields.some((f) => captionEdits[f] !== undefined) ? " •" : ""}
+                      </button>
+                    ))}
+                  </div>
+                  {CAPTION_TABS.find((t) => t.key === captionTab)!.fields.map((field) => {
+                    const text = captionEdits[field] ?? generated[field];
+                    const len = captionLength(field, text);
+                    const limit = PLATFORM_INFO[field].limit;
+                    return (
+                      <div key={field} className="caption-field">
+                        <label>
+                          <span>
+                            {PLATFORM_INFO[field].label}{" "}
+                            <small className={len > limit ? "over" : ""}>
+                              {len}/{limit} অক্ষর{captionEdits[field] !== undefined ? " · আপনার বদলানো" : " · প্রশ্ন থেকে নিজে থেকে"}
+                            </small>
+                          </span>
+                          <textarea
+                            rows={field === "youtubeTitle" ? 2 : 10}
+                            value={text}
+                            onChange={(e) => setCaptionEdits((c) => ({ ...c, [field]: e.target.value }))}
+                          />
+                        </label>
+                        <div className="row small">
+                          <button onClick={() => copyCaption(field)}>কপি</button>
+                          {captionEdits[field] !== undefined ? (
+                            <button
+                              className="secondary"
+                              onClick={() =>
+                                setCaptionEdits((c) => {
+                                  const next = { ...c };
+                                  delete next[field];
+                                  return next;
+                                })
+                              }
+                              title="প্রশ্ন থেকে আবার বানাবে"
+                            >
+                              ডিফল্টে ফেরান
+                            </button>
+                          ) : null}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </details>
+            ) : null}
           </section>
         ) : null}
 
