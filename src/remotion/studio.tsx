@@ -206,14 +206,40 @@ const OptionRow: React.FC<{
   </div>
 );
 
+/**
+ * Rough wrapped height of a text block. Noto Serif Bengali averages 0.40–0.49 em per character
+ * (measured); 0.5 leaves room for word-wrap gaps, so the estimate errs on the tall side.
+ */
+const textHeight = (text: string, size: number, width: number, lineHeight: number) =>
+  Math.max(1, Math.ceil((text.length * size * 0.5) / width)) * size * lineHeight;
+
 const sizes = (p: ReelProps) => {
   const longest = Math.max(0, ...p.options.map((o) => o.text.length));
+  const body = fit(p.body.length, [[90, 54], [150, 48], [220, 42], [300, 38]], 34);
+  const option = fit(longest + p.options.length * 4, [[34, 40], [50, 38], [70, 34]], 30);
+  const explain = fit(p.explanation.length, [[180, 34], [280, 31], [400, 28], [520, 26]], 24);
+
+  // Where the content ends on each page (pen layout: column at x 72, 936 wide, header from y 270),
+  // so the mascot is shown whenever it actually fits underneath instead of by a fixed character limit.
+  const top = 270 + 95 + 30 + 43 + 24 + textHeight(p.body, body, 936, 1.42);
+  const optionText = 936 - 2 * 26.5 - 60 - 24 - 64; // padding, letter badge, gap, room for the check icon
+  const rows = p.options.reduce((h, o) => h + Math.max(60, textHeight(o.text, option, optionText, 1.35)) + 44, 0) + 18 * Math.max(0, p.options.length - 1);
+  const optionsEnd = top + 40 + rows;
+  const explainEnd =
+    top + 52 + 104 + 32 + 26 + 51 + 16 + textHeight(p.explanation, explain, 936 - 8 - 66, 1.5) + 30;
+
   return {
-    body: fit(p.body.length, [[90, 54], [150, 48], [220, 42], [300, 38]], 34),
-    option: fit(longest + p.options.length * 4, [[34, 40], [50, 38], [70, 34]], 30),
-    explain: fit(p.explanation.length, [[180, 34], [280, 31], [400, 28], [520, 26]], 24),
-    /** The mascot sits under the content; a tall question or option list would run into it. */
-    roomForMascot: p.body.length <= 150 && longest <= 45,
+    body,
+    option,
+    explain,
+    /** Thinking mascot (top 1330) clears the options + timer row. */
+    roomForThinking: optionsEnd + 36 + 104 <= 1350,
+    /** Trophy mascot on the answer page (top 1400) clears the options. */
+    roomForSuccess: optionsEnd <= 1410,
+    /** On the explanation page the mascot sits under the card and must stay on screen. */
+    roomForExplain: explainEnd + 8 + 60 + 420 <= 1900,
+    /** Thumbnail: options + CTA pill above the mascot at 1370. */
+    roomForThumbnail: optionsEnd + 6 + 36 + 113 <= 1390,
   };
 };
 
@@ -464,9 +490,7 @@ export const StudioScene: React.FC<{ p: ReelProps; C: Palette; T: ReturnType<typ
   const secondsLeft = Math.max(0, Math.ceil(T.thinkEnd - frame / fps));
   const remaining = (1 - thinkP) * 6;
 
-  const mascotOk = sz.roomForMascot;
-  /** On the explanation page the mascot sits under the card; a long explanation would push it off screen. */
-  const explainMascot = p.body.length <= 150 && p.explanation.length <= 330;
+  const explainMascot = sz.roomForExplain;
   const answerP = T.explain === null ? 0 : interpolate(frame, [s(T.explain), s(T.explain + 0.5)], [0, 1], { ...clamp, easing: ease });
   const cardP = T.explain === null ? 0 : interpolate(frame, [s(T.explain + 0.2), s(T.explain + 0.8)], [0, 1], { ...clamp, easing: ease });
   const correct = p.options[p.correctIndex];
@@ -478,15 +502,15 @@ export const StudioScene: React.FC<{ p: ReelProps; C: Palette; T: ReturnType<typ
     <AbsoluteFill style={{ backgroundColor: C.canvas, color: C.ink }}>
       {audio}
       <Backdrop st={st} />
-      {mascotOk ? (
-        <>
-          <Niru st={st} top={1330} left={300} opacity={mascotIn * (1 - revealP) * fade}>
-            {revealP < 1 ? <NiruThinking t={now - T.optionsIn} fps={fps} /> : null}
-          </Niru>
-          <Niru st={st} top={1400} left={310} opacity={revealP * (1 - explainP) * fade}>
-            {revealP > 0 && explainP < 1 ? <NiruSuccess t={now - T.reveal} fps={fps} /> : null}
-          </Niru>
-        </>
+      {sz.roomForThinking ? (
+        <Niru st={st} top={1330} left={300} opacity={mascotIn * (1 - revealP) * fade}>
+          {revealP < 1 ? <NiruThinking t={now - T.optionsIn} fps={fps} /> : null}
+        </Niru>
+      ) : null}
+      {sz.roomForSuccess ? (
+        <Niru st={st} top={1400} left={310} opacity={revealP * (1 - explainP) * fade}>
+          {revealP > 0 && explainP < 1 ? <NiruSuccess t={now - T.reveal} fps={fps} /> : null}
+        </Niru>
       ) : null}
 
       <div style={{ position: "absolute", top: 270, left: 72, right: 72, display: "flex", flexDirection: "column" }}>
@@ -585,7 +609,7 @@ export const StudioThumbnail: React.FC<{ p: ReelProps; C: Palette }> = ({ p, C }
   return (
     <AbsoluteFill style={{ backgroundColor: C.canvas, color: C.ink }}>
       <Backdrop st={st} />
-      {sz.roomForMascot ? (
+      {sz.roomForThumbnail ? (
         <Niru st={st} top={1370} left={300} spotTop={1310} opacity={1}>
           <Img src={niruThinking} style={{ width: 420, height: 420 }} />
         </Niru>
