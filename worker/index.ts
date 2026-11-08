@@ -26,7 +26,7 @@ export interface Env {
   ACCESS_TEAM_DOMAIN?: string;
   ACCESS_AUD?: string;
   ALLOW_NO_ACCESS?: string;
-  /** ElevenLabs API key (secret) and model; Bangla needs eleven_v3. */
+  /** ElevenLabs API key (secret) and model (default eleven_v4; older multilingual models have no Bangla). */
   ELEVENLABS_API_KEY?: string;
   ELEVENLABS_MODEL?: string;
   /**
@@ -110,13 +110,16 @@ const sha256 = async (text: string) => {
 /** Speed choice from the studio (-15 slow … +5 fast) → an Eleven v3 delivery tag. */
 const paceTag = (rate: number) => (rate <= -10 ? "[slowly] " : "");
 
+/** ElevenLabs model for narration; override with the ELEVENLABS_MODEL variable. */
+const ttsModel = (env: Env) => env.ELEVENLABS_MODEL || "eleven_v4";
+
 async function synthesizeElevenLabs(env: Env, text: string, voice: string, rate: number): Promise<Response> {
   if (!env.ELEVENLABS_API_KEY) return json({ message: "ELEVENLABS_API_KEY secret is not set on the Worker." }, 500);
   const base = env.ELEVENLABS_ENDPOINT ?? "https://api.elevenlabs.io";
   return fetch(`${base}/v1/text-to-speech/${encodeURIComponent(voice)}?output_format=mp3_44100_128`, {
     method: "POST",
     headers: { "xi-api-key": env.ELEVENLABS_API_KEY, "Content-Type": "application/json", Accept: "audio/mpeg" },
-    body: JSON.stringify({ text: paceTag(rate) + text, model_id: env.ELEVENLABS_MODEL || "eleven_v3" }),
+    body: JSON.stringify({ text: paceTag(rate) + text, model_id: ttsModel(env) }),
   });
 }
 
@@ -132,7 +135,7 @@ async function tts(request: Request, env: Env, ctx: ExecutionContext): Promise<R
   const rate = Math.max(-30, Math.min(30, Math.round(Number(body?.rate ?? 0)) || 0));
   if (!text || text.length > 1500) return json({ message: "text must be 1–1500 characters." }, 422);
 
-  const key = await sha256(JSON.stringify(["elevenlabs", voice, env.ELEVENLABS_MODEL || "eleven_v3", rate, text]));
+  const key = await sha256(JSON.stringify(["elevenlabs", voice, ttsModel(env), rate, text]));
   const cacheKey = new Request(`https://tts-cache.nirnoy.internal/${key}.mp3`);
   const hit = await caches.default.match(cacheKey);
   if (hit) return hit;
