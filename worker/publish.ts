@@ -1,6 +1,6 @@
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
 import { channelToken } from "./channels";
-import { facebookReelFinish, facebookReelStart, facebookReelStatus, facebookReelUpload, facebookThumbnail } from "./facebook";
+import { FB_SCHEDULE_MAX_MS, FB_SCHEDULE_MIN_MS, facebookDeleteVideo, facebookReelFinish, facebookReelStart, facebookReelStatus, facebookReelUpload, facebookThumbnail } from "./facebook";
 import { instagramContainer, instagramContainerStatus, instagramPublish, instagramUpload } from "./instagram";
 import type { Env } from "./index";
 
@@ -37,9 +37,10 @@ export class PublishWorkflow extends WorkflowEntrypoint<Env, Params> {
       if (!r) throw new Error("Publish row not found.");
       return r;
     });
-    if (row.scheduled_at && Date.parse(`${row.scheduled_at.replace(" ", "T")}Z`) > Date.now()) {
-      await step.sleepUntil("wait for the scheduled time", new Date(`${row.scheduled_at.replace(" ", "T")}Z`));
-    }
+    const at = row.scheduled_at ? Date.parse(`${row.scheduled_at.replace(" ", "T")}Z`) : 0;
+    // Facebook keeps scheduled Reels itself, so those are uploaded right away; others wait here.
+    const nativeSchedule = row.platform === "facebook" && at > Date.now();
+    if (at > Date.now() && !nativeSchedule) await step.sleepUntil("wait for the scheduled time", new Date(at));
     // Canceled (or channel removed) while waiting.
     const current = await step.do("check still wanted", async () => {
       const r = await this.env.DB.prepare("SELECT status FROM publishes WHERE id = ?").bind(id).first<{ status: string }>();
@@ -54,7 +55,11 @@ export class PublishWorkflow extends WorkflowEntrypoint<Env, Params> {
       });
 
       let url: string | null;
-      if (row.platform === "facebook") url = await this.facebook(row, step);
+      if (row.platform === "facebook") {
+        const r = await this.facebook(row, step, nativeSchedule ? Math.floor(at / 1000) : undefined);
+        if (r.canceled) return { skipped: "canceled" };
+        url = r.url;
+      }
       else if (row.platform === "instagram") url = await this.instagram(row, step);
       else throw new Error(`No connector for ${row.platform} yet.`);
 
@@ -73,8 +78,11 @@ export class PublishWorkflow extends WorkflowEntrypoint<Env, Params> {
     }
   }
 
-  /** Facebook Page Reel: start → upload → finish, then wait for processing. Returns the link. */
-  private async facebook(row: PublishRow, step: WorkflowStep): Promise<string | null> {
+  /**
+   * Facebook Page Reel: start → upload → finish, then wait for processing. With `publishAt` the Reel
+   * is scheduled on Facebook; this then waits for that time and confirms it went live.
+   */
+  private async facebook(row: PublishRow, step: WorkflowStep, publishAt?: number): Promise<{ url: string | null; canceled?: boolean }> {
     const id = row.id;
     // Upload + finish run as one step, so a half-sent upload is never "finished" later.
     // No automatic retries here: a retry after a successful "finish" would post the reel twice.
@@ -85,27 +93,48 @@ export class PublishWorkflow extends WorkflowEntrypoint<Env, Params> {
       if (!video) throw new Error("Reel has no rendered video — render it first.");
       const vid = await facebookReelStart(this.env, ch.account_id, ch.token);
       await facebookReelUpload(this.env, vid, ch.token, await video.arrayBuffer());
-      await facebookReelFinish(this.env, ch.account_id, vid, ch.token, row.caption);
+      await facebookReelFinish(this.env, ch.account_id, vid, ch.token, row.caption, publishAt);
       await setStatus(this.env, id, { remote_id: vid });
       const thumb = await this.env.MEDIA.get(`reels/${row.reel_id}/thumb.jpg`);
       if (thumb) await facebookThumbnail(this.env, vid, ch.token, await thumb.arrayBuffer());
       return vid;
     });
 
-    // Facebook processes the video for a while; check every 20 s for up to ~20 minutes.
     let url: string | null = null;
-    for (let i = 0; i < 60; i++) {
-      const s = await step.do(`check processing ${i}`, { retries: { limit: 3, delay: "10 seconds" } }, async () => {
-        const ch = await channelToken(this.env, row.channel_id);
-        return facebookReelStatus(this.env, videoId, ch.token);
-      });
-      url = s.url ?? url;
-      if (s.state === "error") throw new Error(s.error);
-      if (s.state === "ready") break;
-      if (i === 59) throw new Error("Facebook is still processing after 20 minutes — check the Page; it may appear later.");
-      await step.sleep(`wait ${i}`, "20 seconds");
+    // Check every 20 s for up to ~20 minutes until `done` says so.
+    const poll = async (label: string, done: (s: Awaited<ReturnType<typeof facebookReelStatus>>) => boolean, timeoutMsg: string) => {
+      for (let i = 0; i < 60; i++) {
+        const s = await step.do(`${label} ${i}`, { retries: { limit: 3, delay: "10 seconds" } }, async () => {
+          const ch = await channelToken(this.env, row.channel_id);
+          return facebookReelStatus(this.env, videoId, ch.token);
+        });
+        url = s.url ?? url;
+        if (s.state === "error") throw new Error(s.error);
+        if (done(s)) return;
+        if (i === 59) throw new Error(timeoutMsg);
+        await step.sleep(`${label} wait ${i}`, "20 seconds");
+      }
+    };
+
+    if (!publishAt) {
+      await poll("check processing", (s) => s.state === "ready", "Facebook is still processing after 20 minutes — check the Page; it may appear later.");
+      return { url };
     }
-    return url;
+
+    // Scheduled on Facebook: once it's processed it sits in Meta Business Suite → Scheduled.
+    await poll("check processing", (s) => s.state === "ready" || s.processed === true, "Facebook is still processing after 20 minutes — check Meta Business Suite.");
+    await step.do("mark scheduled on Facebook", async () => {
+      await setStatus(this.env, row.id, { status: "scheduled_remote", url, error: null });
+      return true;
+    });
+    await step.sleepUntil("wait until Facebook publishes it", new Date((publishAt + 120) * 1000));
+    const still = await step.do("check not canceled", async () => {
+      const r = await this.env.DB.prepare("SELECT status FROM publishes WHERE id = ?").bind(row.id).first<{ status: string }>();
+      return r?.status ?? "canceled";
+    });
+    if (still !== "scheduled_remote") return { url, canceled: true };
+    await poll("check published", (s) => s.state === "ready", "Facebook has not published the scheduled Reel 20 minutes after its time — check Meta Business Suite.");
+    return { url };
   }
 
   /** Instagram Reel: container + resumable upload, wait FINISHED, then media_publish. Returns the link. */
@@ -167,9 +196,16 @@ export async function publishApi(request: Request, env: Env, url: URL, user: str
       if (t > Date.now() + 60_000) scheduled = new Date(t).toISOString().replace("T", " ").slice(0, 19);
     }
     const created = [];
+    const chans = [];
     for (const t of targets) {
       const ch = await env.DB.prepare("SELECT id, platform FROM channels WHERE id = ?").bind(Number(t.channel_id)).first<{ id: number; platform: string }>();
-      if (!ch) continue;
+      if (ch) chans.push({ t, ch });
+    }
+    if (scheduled && chans.some(({ ch }) => ch.platform === "facebook")) {
+      const ahead = Date.parse(`${scheduled.replace(" ", "T")}Z`) - Date.now();
+      if (ahead < FB_SCHEDULE_MIN_MS || ahead > FB_SCHEDULE_MAX_MS) return json({ message: "Facebook-এ schedule করতে সময়টা এখন থেকে অন্তত ১০ মিনিট পরে এবং ২৯ দিনের মধ্যে হতে হবে।" }, 422);
+    }
+    for (const { t, ch } of chans) {
       const row = await env.DB.prepare(
         "INSERT INTO publishes (reel_id, channel_id, platform, caption, scheduled_at, created_by) VALUES (?, ?, ?, ?, ?, ?) RETURNING id",
       )
@@ -203,7 +239,16 @@ export async function publishApi(request: Request, env: Env, url: URL, user: str
       return json({ ok: true });
     }
     if (!one[2] && request.method === "DELETE") {
-      if (row.status !== "scheduled") return json({ message: "শুধু নির্ধারিত (এখনো যায়নি এমন) post বাতিল করা যায়।" }, 422);
+      if (row.status !== "scheduled" && row.status !== "scheduled_remote") return json({ message: "শুধু নির্ধারিত (এখনো যায়নি এমন) post বাতিল করা যায়।" }, 422);
+      // Scheduled on Facebook: remove the waiting video there too.
+      if (row.status === "scheduled_remote" && row.remote_id) {
+        try {
+          const ch = await channelToken(env, row.channel_id);
+          await facebookDeleteVideo(env, row.remote_id, ch.token);
+        } catch (e) {
+          return json({ message: `Facebook থেকে মোছা গেল না: ${(e as Error).message}` }, 502);
+        }
+      }
       await setStatus(env, id, { status: "canceled" });
       return json({ ok: true });
     }

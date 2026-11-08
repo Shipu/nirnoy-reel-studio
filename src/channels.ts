@@ -12,7 +12,7 @@ export type Channel = {
   created_at: string;
 };
 export type PendingAccount = { id: string; name: string; picture: string | null; connected: boolean };
-export type PublishStatus = "scheduled" | "publishing" | "published" | "failed" | "canceled";
+export type PublishStatus = "scheduled" | "scheduled_remote" | "publishing" | "published" | "failed" | "canceled";
 export type Publish = {
   id: number;
   reel_id: number;
@@ -39,6 +39,7 @@ const post = (body: unknown) => ({ method: "POST", headers: { "content-type": "a
 export const PLATFORM_LABEL: Record<Channel["platform"], string> = { facebook: "Facebook Page", instagram: "Instagram" };
 export const PUBLISH_LABEL: Record<PublishStatus, string> = {
   scheduled: "নির্ধারিত",
+  scheduled_remote: "নির্ধারিত (Facebook-এ)",
   publishing: "যাচ্ছে…",
   published: "প্রকাশিত",
   failed: "ব্যর্থ",

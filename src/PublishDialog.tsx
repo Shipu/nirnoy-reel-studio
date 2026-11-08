@@ -41,9 +41,15 @@ export function PublishDialog({ reelId, props, captions, onClose }: { reelId: nu
 
   const captionFor = (c: Channel) => text[c.id] ?? ready[c.platform];
 
+  // Facebook keeps scheduled Reels itself, but only 10 minutes to 29 days ahead.
+  const fbChosen = (channels ?? []).some((c) => chosen.has(c.id) && c.platform === "facebook");
+  const ahead = when === "at" && at ? new Date(dhakaToIso(at)).getTime() - Date.now() : null;
+  const fbWindowError = fbChosen && ahead !== null && (ahead < 10 * 60_000 || ahead > 29 * 24 * 3600_000);
+
   const submit = async () => {
     if (!channels) return;
     if (when === "at" && !at) return setMsg({ kind: "error", text: "সময় দিন।" });
+    if (fbWindowError) return setMsg({ kind: "error", text: "Facebook-এ schedule করতে সময়টা এখন থেকে অন্তত ১০ মিনিট পরে এবং ২৯ দিনের মধ্যে হতে হবে।" });
     setMsg({ kind: "busy", text: "পাঠাচ্ছি…" });
     try {
       const targets = channels.filter((c) => chosen.has(c.id)).map((c) => ({ channel_id: c.id, caption: captionFor(c) }));
@@ -108,6 +114,11 @@ export function PublishDialog({ reelId, props, captions, onClose }: { reelId: nu
           </label>
           {when === "at" ? <input type="datetime-local" value={at} onChange={(e) => setAt(e.target.value)} /> : null}
         </div>
+        {when === "at" && fbChosen ? (
+          <p className={`muted ${fbWindowError ? "over" : ""}`}>
+            Facebook-এ এখনই upload হয়ে Meta Business Suite-এর Scheduled-এ থাকবে, Facebook নিজেই সময়মতো প্রকাশ করবে (১০ মিনিট থেকে ২৯ দিনের মধ্যে)। Instagram studio থেকে সময়মতো যাবে।
+          </p>
+        ) : null}
 
         {msg ? <p className={`status ${msg.kind}`}>{msg.text}</p> : null}
 
@@ -128,7 +139,7 @@ export function PublishDialog({ reelId, props, captions, onClose }: { reelId: nu
                 <li key={r.id}>
                   <span>
                     <span className={`chip pub-${r.status}`}>{PUBLISH_LABEL[r.status]}</span> {r.channel_name ?? "(সরানো channel)"}
-                    {r.scheduled_at && r.status === "scheduled" ? <small className="muted"> · {showDhaka(r.scheduled_at)}</small> : null}
+                    {r.scheduled_at && (r.status === "scheduled" || r.status === "scheduled_remote") ? <small className="muted"> · {showDhaka(r.scheduled_at)}</small> : null}
                     {r.error ? <small className="over"> · {r.error}</small> : null}
                   </span>
                   <span className="row small">
@@ -142,7 +153,7 @@ export function PublishDialog({ reelId, props, captions, onClose }: { reelId: nu
                         আবার চেষ্টা
                       </button>
                     ) : null}
-                    {r.status === "scheduled" ? (
+                    {r.status === "scheduled" || r.status === "scheduled_remote" ? (
                       <button className="link danger" onClick={() => act(() => cancelPublish(r.id))}>
                         বাতিল
                       </button>

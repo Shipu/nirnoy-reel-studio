@@ -89,14 +89,29 @@ export async function facebookReelUpload(env: Env, videoId: string, token: strin
   );
 }
 
-export async function facebookReelFinish(env: Env, pageId: string, videoId: string, token: string, caption: string) {
-  await call(
-    await fetch(`${graph(env)}/${pageId}/video_reels`, {
-      method: "POST",
-      body: new URLSearchParams({ upload_phase: "finish", video_id: videoId, video_state: "PUBLISHED", description: caption, access_token: token }),
-    }),
-  );
+/**
+ * Finishes the upload: publishes now, or — with `publishAt` (unix seconds) — hands it to Facebook as a
+ * scheduled Reel, which then shows under Scheduled in Meta Business Suite and goes live on its own.
+ */
+export async function facebookReelFinish(env: Env, pageId: string, videoId: string, token: string, caption: string, publishAt?: number) {
+  const body = new URLSearchParams({ upload_phase: "finish", video_id: videoId, description: caption, access_token: token });
+  if (publishAt) {
+    body.set("video_state", "SCHEDULED");
+    body.set("scheduled_publish_time", String(publishAt));
+  } else {
+    body.set("video_state", "PUBLISHED");
+  }
+  await call(await fetch(`${graph(env)}/${pageId}/video_reels`, { method: "POST", body }));
 }
+
+/** Removes a video (used to cancel a Reel scheduled on Facebook). */
+export async function facebookDeleteVideo(env: Env, videoId: string, token: string) {
+  await call(await fetch(`${graph(env)}/${videoId}?${new URLSearchParams({ access_token: token })}`, { method: "DELETE" }));
+}
+
+/** Facebook accepts a scheduled time from 10 minutes to 29 days ahead. */
+export const FB_SCHEDULE_MIN_MS = 10 * 60_000;
+export const FB_SCHEDULE_MAX_MS = 29 * 24 * 3600_000;
 
 /** "ready" once Facebook has processed and published it, "error" with a reason, else still working. */
 export async function facebookReelStatus(env: Env, videoId: string, token: string) {
@@ -107,7 +122,9 @@ export async function facebookReelStatus(env: Env, videoId: string, token: strin
   const url = r.permalink_url ? (r.permalink_url.startsWith("http") ? r.permalink_url : `https://www.facebook.com${r.permalink_url}`) : null;
   if (s?.video_status === "error" || s?.processing_phase?.status === "error") return { state: "error" as const, error: s?.processing_phase?.error?.message ?? "Facebook could not process the video.", url };
   if (s?.publishing_phase?.status === "complete" || s?.video_status === "published") return { state: "ready" as const, url };
-  return { state: "working" as const, url };
+  // Processed but not live yet (a scheduled Reel waiting for its time).
+  const processed = s?.processing_phase?.status === "complete" || ["ready", "upcoming", "scheduled"].includes(s?.video_status ?? "");
+  return { state: "working" as const, url, processed };
 }
 
 /** Best-effort custom cover; Facebook may ignore it for Reels. */
