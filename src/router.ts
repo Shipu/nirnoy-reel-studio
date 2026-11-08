@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
 
-/** Two pages, so a tiny pushState router instead of a dependency: "/" (list) and "/reels/:id" (editor). */
-export type Route = { page: "list" } | { page: "editor"; id: number };
+/** A few pages, so a tiny pushState router instead of a dependency: "/" (list), "/channels", "/reels/:id" (editor). */
+export type Route = { page: "list" } | { page: "channels" } | { page: "editor"; id: number };
 
 const parse = (path: string): Route => {
   const m = path.match(/^\/reels\/(\d+)\/?$/);
-  return m ? { page: "editor", id: Number(m[1]) } : { page: "list" };
+  if (m) return { page: "editor", id: Number(m[1]) };
+  return /^\/channels\/?$/.test(path) ? { page: "channels" } : { page: "list" };
 };
 
 export const navigate = (path: string) => {

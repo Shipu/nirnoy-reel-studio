@@ -8,7 +8,8 @@
 		"binding": "ASSETS",
 		"not_found_handling": "single-page-application",
 		"run_worker_first": [
-			"/api/*"
+			"/api/*",
+			"/oauth/*"
 		]
 	},
 	"vars": {
@@ -31,6 +32,14 @@
 			// Voice clips, rendered MP4s and thumbnails, under reels/<id>/.
 			"binding": "MEDIA",
 			"bucket_name": "nirnoy-reel-studio-media"
+		}
+	],
+	"workflows": [
+		{
+			// Waits for a post's scheduled time, then uploads the reel to the channel (worker/publish.ts).
+			"name": "nirnoy-reel-publish",
+			"binding": "PUBLISH",
+			"class_name": "PublishWorkflow"
 		}
 	],
 	"routes": [

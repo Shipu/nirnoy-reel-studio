@@ -16,6 +16,9 @@ import {
 } from "./reels";
 import { PLATFORMS, PLATFORM_INFO, type Platform, captionsFor } from "./captions";
 import { navigate } from "./router";
+import { type Publish, PUBLISH_LABEL, listPublishes } from "./channels";
+import { PublishDialog } from "./PublishDialog";
+import type { ReelData } from "./reels";
 
 type Status = { kind: "idle" | "busy" | "error" | "ok"; text: string };
 const FILTERS: (ReelStatus | "all")[] = ["all", "draft", "rendered", "published"];
@@ -30,12 +33,28 @@ export function ReelsPage() {
   const [idInput, setIdInput] = useState("");
   const [filters, setFilters] = useState<RandomFilters>({ exam_name: "bar_council", year: "", topic_id: "", skip_used: true });
   /** A question that already has reels: ask whether to open one of them or start a new one. */
+  const [publishes, setPublishes] = useState<Publish[]>([]);
+  const [publishFor, setPublishFor] = useState<{ id: number; data: ReelData } | null>(null);
   const [conflict, setConflict] = useState<{ q: ApiQuestion; reels: ReelRow[] } | null>(null);
 
-  const refresh = () =>
-    listReels()
+  const refresh = () => {
+    listPublishes()
+      .then(setPublishes)
+      .catch(() => undefined);
+    return listReels()
       .then(setRows)
       .catch((e) => setStatus({ kind: "error", text: (e as Error).message }));
+  };
+
+  const openPublish = async (r: ReelRow) => {
+    try {
+      const full = await getReel(r.id);
+      if (!full.data) throw new Error("এই reel-এ লেখা জমা নেই — একবার খুলে নিন।");
+      setPublishFor({ id: r.id, data: full.data });
+    } catch (e) {
+      setStatus({ kind: "error", text: (e as Error).message });
+    }
+  };
   useEffect(() => {
     void refresh();
   }, []);
@@ -103,7 +122,12 @@ export function ReelsPage() {
         <h1>
           নির্ণয় <span>Reel Studio</span>
         </h1>
-        <button onClick={() => setCreating((c) => !c)}>{creating ? "বন্ধ করুন" : "+ নতুন reel"}</button>
+        <div className="row">
+          <button className="secondary" onClick={() => navigate("/channels")}>
+            Channels
+          </button>
+          <button onClick={() => setCreating((c) => !c)}>{creating ? "বন্ধ করুন" : "+ নতুন reel"}</button>
+        </div>
       </header>
 
       {creating ? (
@@ -136,6 +160,18 @@ export function ReelsPage() {
             Random প্রশ্ন
           </button>
         </section>
+      ) : null}
+
+      {publishFor ? (
+        <PublishDialog
+          reelId={publishFor.id}
+          props={publishFor.data.props}
+          captions={publishFor.data.captions}
+          onClose={() => {
+            setPublishFor(null);
+            void refresh();
+          }}
+        />
       ) : null}
 
       {conflict ? (
@@ -195,6 +231,20 @@ export function ReelsPage() {
               </div>
               <div className="muted">
                 Reel #{r.id} · {r.updated_by ?? r.created_by ?? "—"} · {r.updated_at ?? r.created_at} UTC
+                {publishes
+                  .filter((p) => p.reel_id === r.id && p.status !== "canceled")
+                  .slice(0, 6)
+                  .map((p) =>
+                    p.url ? (
+                      <a key={p.id} className={`chip pub-${p.status}`} href={p.url} target="_blank" rel="noreferrer" title={p.channel_name ?? ""}>
+                        {p.channel_name ?? p.platform}: {PUBLISH_LABEL[p.status]}
+                      </a>
+                    ) : (
+                      <span key={p.id} className={`chip pub-${p.status}`} title={p.error ?? ""}>
+                        {p.channel_name ?? p.platform}: {PUBLISH_LABEL[p.status]}
+                      </span>
+                    ),
+                  )}
                 {r.youtube_url ? (
                   <>
                     {" · "}
@@ -217,6 +267,9 @@ export function ReelsPage() {
                     <a className="btn secondary" href={`${mediaUrl(r.id, "thumb.jpg")}?download=1`}>
                       Thumbnail
                     </a>
+                    <button className="secondary" onClick={() => openPublish(r)}>
+                      Publish / Schedule
+                    </button>
                     <button className="secondary" onClick={() => markPublished(r)}>
                       {r.status === "published" ? "YouTube link বদলান" : "YouTube-এ দিয়েছি"}
                     </button>

@@ -1,10 +1,26 @@
 import { createRemoteJWKSet, jwtVerify } from "jose";
+import { channelsApi, oauthCallback } from "./channels";
+import { publishApi } from "./publish";
+
+export { PublishWorkflow } from "./publish";
 
 export interface Env {
   ASSETS: Fetcher;
   DB: D1Database;
   /** Voice clips, rendered MP4s and thumbnails, under reels/<id>/. */
   MEDIA: R2Bucket;
+  /** Posts a reel to a channel (worker/publish.ts). */
+  PUBLISH: Workflow<{ publishId: number }>;
+  /** 32 random bytes, base64: encrypts platform tokens at rest. */
+  TOKEN_KEY?: string;
+  /** Meta (Facebook / Instagram) app credentials, secrets. */
+  META_APP_ID?: string;
+  META_APP_SECRET?: string;
+  META_GRAPH_VERSION?: string;
+  /** Test-only overrides of the Meta endpoints. */
+  META_GRAPH_BASE?: string;
+  META_RUPLOAD_BASE?: string;
+  META_DIALOG_BASE?: string;
   NIRNOY_API_BASE: string;
   REEL_API_KEY: string;
   ACCESS_TEAM_DOMAIN?: string;
@@ -377,12 +393,17 @@ export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
 
-    if (!url.pathname.startsWith("/api/")) return env.ASSETS.fetch(request);
+    const isOauth = url.pathname.startsWith("/oauth/");
+    if (!url.pathname.startsWith("/api/") && !isOauth) return env.ASSETS.fetch(request);
 
     const user = await authorize(request, env);
     if (!user) return json({ message: "Unauthorized. Sign in through Cloudflare Access." }, 401);
 
     if (request.method === "GET" && url.pathname === "/api/me") return json({ email: user });
+
+    if (isOauth) return oauthCallback(request, env, url);
+    if (url.pathname.startsWith("/api/channels")) return channelsApi(request, env, url, user);
+    if (/^\/api\/reels\/\d+\/publish\/?$/.test(url.pathname) || url.pathname.startsWith("/api/publishes")) return publishApi(request, env, url, user);
 
     if (request.method === "POST" && url.pathname === "/api/tts") return tts(request, env, ctx);
     if (request.method === "GET" && url.pathname === "/api/tts/voices") return json({ provider: "elevenlabs", voices: voicesFor(env) });

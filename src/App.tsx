@@ -21,6 +21,7 @@ import { ClipPlayer } from "./ClipPlayer";
 import { startMic } from "./recorder";
 import { type ReelRow, STATUS_LABEL, fromData, getReel, loadPrefs, mediaUrl, savePrefs, toData, updateReel, uploadMedia } from "./reels";
 import { navigate } from "./router";
+import { PublishDialog } from "./PublishDialog";
 import { CAPTION_TABS, type CaptionTab, type Captions, PLATFORM_INFO, type Platform, captionLength, generateCaptions } from "./captions";
 import { FPS, HEIGHT, type ReelProps, SEGMENTS, type SegmentKey, THEMES, type ThemeKey, type VoiceClip, WIDTH, themeOf, durationInFrames, hasExplanation } from "./remotion/types";
 
@@ -57,6 +58,7 @@ export function Editor({ reelId }: { reelId: number }) {
   const [scripts, setScripts] = useState<Record<SegmentKey, string> | null>(null);
   /** Captions you edited for this reel; the rest follow the question automatically. */
   const [captionEdits, setCaptionEdits] = useState<Partial<Captions>>({});
+  const [publishing, setPublishing] = useState(false);
   const [captionTab, setCaptionTab] = useState<CaptionTab>("facebook");
   const [voices, setVoices] = useState<TtsVoice[]>([]);
   const [voice, setVoice] = useState<string>("");
@@ -607,6 +609,14 @@ export function Editor({ reelId }: { reelId: number }) {
                   <button className="secondary" disabled={busy} onClick={downloadThumbnail}>
                     Thumbnail Download (JPG)
                   </button>
+                  <button
+                    className="secondary"
+                    disabled={busy || !reel?.rendered_at}
+                    title={reel?.rendered_at ? "Facebook ইত্যাদিতে পাঠান বা schedule করুন" : "আগে MP4 বানান"}
+                    onClick={() => setPublishing(true)}
+                  >
+                    Publish / Schedule
+                  </button>
                 </>
               ) : (
                 <>
@@ -623,6 +633,7 @@ export function Editor({ reelId }: { reelId: number }) {
           <div className="empty">{status.kind === "error" ? status.text : "Reel খুলছি…"}</div>
         )}
       </main>
+      {publishing && props ? <PublishDialog reelId={reelId} props={props} captions={captionEdits} onClose={() => setPublishing(false)} /> : null}
     </div>
   );
 }
