@@ -16,6 +16,7 @@ import {
 } from "./reels";
 import { PLATFORMS, PLATFORM_INFO, type Platform, captionsFor } from "./captions";
 import { navigate } from "./router";
+import { syncBuiltinVoices } from "./voices";
 import { type Publish, PUBLISH_LABEL, listPublishes } from "./channels";
 import { PublishDialog } from "./PublishDialog";
 import type { ReelData } from "./reels";
@@ -83,8 +84,10 @@ export function ReelsPage() {
 
   const startNew = async (q: ApiQuestion) => {
     setStatus({ kind: "busy", text: "নতুন খসড়া বানাচ্ছি…" });
-    const props = { ...toReelProps(q), ...loadPrefs() };
-    const row = await createReel(q.id, toData(props, narrationScripts(props)));
+    const base = { ...toReelProps(q), ...loadPrefs() };
+    const scripts = narrationScripts(base);
+    const props = syncBuiltinVoices(base, scripts);
+    const row = await createReel(q.id, toData(props, scripts));
     navigate(`/reels/${row.id}`);
   };
 

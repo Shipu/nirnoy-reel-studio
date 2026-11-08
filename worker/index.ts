@@ -55,6 +55,36 @@ const DEFAULT_VOICES: Voice[] = [
   { id: "nPczCjzI2devNBz1zQrb", label: "Brian (premade · free plan-এ চলে · বিদেশি উচ্চারণ)" },
 ];
 
+/**
+ * Your own ElevenLabs voices (cloned, designed or added to "My Voices", e.g. "Shipu"), listed first.
+ * Premade voices are skipped; cached for 10 minutes per isolate. Empty if the key can't list voices.
+ */
+let accountVoices: { at: number; voices: Voice[] } | null = null;
+async function myVoices(env: Env): Promise<Voice[]> {
+  if (!env.ELEVENLABS_API_KEY) return [];
+  if (accountVoices && Date.now() - accountVoices.at < 10 * 60_000) return accountVoices.voices;
+  try {
+    const base = env.ELEVENLABS_ENDPOINT ?? "https://api.elevenlabs.io";
+    const res = await fetch(`${base}/v1/voices`, { headers: { "xi-api-key": env.ELEVENLABS_API_KEY } });
+    if (!res.ok) return [];
+    const data = (await res.json()) as { voices?: { voice_id: string; name: string; category?: string }[] };
+    const voices = (data.voices ?? [])
+      .filter((v) => v.voice_id && v.category !== "premade")
+      .map((v) => ({ id: v.voice_id, label: `${v.name} (আমার voice)` }));
+    accountVoices = { at: Date.now(), voices };
+    return voices;
+  } catch {
+    return [];
+  }
+}
+
+/** Studio voice list: your own voices first, then ELEVENLABS_VOICES or the defaults (no duplicates). */
+async function voiceList(env: Env): Promise<Voice[]> {
+  const mine = await myVoices(env);
+  const ids = new Set(mine.map((v) => v.id));
+  return [...mine, ...voicesFor(env).filter((v) => !ids.has(v.id))];
+}
+
 /** Voices for the studio: ELEVENLABS_VOICES (JSON) when set and valid, else the defaults. */
 function voicesFor(env: Env): Voice[] {
   if (!env.ELEVENLABS_VOICES) return DEFAULT_VOICES;
@@ -97,7 +127,7 @@ async function synthesizeElevenLabs(env: Env, text: string, voice: string, rate:
 async function tts(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
   const body = (await request.json().catch(() => null)) as { text?: unknown; voice?: unknown; rate?: unknown } | null;
   const text = typeof body?.text === "string" ? body.text.trim() : "";
-  const voices = voicesFor(env);
+  const voices = await voiceList(env);
   const voice = typeof body?.voice === "string" && voices.some((v) => v.id === body.voice) ? body.voice : voices[0].id;
   const rate = Math.max(-30, Math.min(30, Math.round(Number(body?.rate ?? 0)) || 0));
   if (!text || text.length > 1500) return json({ message: "text must be 1–1500 characters." }, 422);
@@ -279,7 +309,7 @@ async function reels(request: Request, env: Env, url: URL, user: string): Promis
     if (request.method === "GET") return json({ data: { ...existing, data: parseData(existing.data) } });
 
     if (request.method === "PATCH") {
-      const body = (await request.json().catch(() => null)) as { data?: ReelData; status?: string; youtube_url?: string | null } | null;
+      const body = (await request.json().catch(() => null)) as { data?: ReelData; status?: string; youtube_url?: string | null; question_id?: unknown } | null;
       if (!body) return json({ message: "Invalid JSON." }, 422);
       const sets: string[] = ["updated_at = ?", "updated_by = ?"];
       const binds: unknown[] = [now, user];
@@ -299,6 +329,12 @@ async function reels(request: Request, env: Env, url: URL, user: string): Promis
           sets.push("rendered_at = ?");
           binds.push(now);
         }
+      }
+      if (body.question_id !== undefined) {
+        const q = Number(body.question_id);
+        if (!Number.isInteger(q) || q <= 0) return json({ message: "question_id must be a positive integer." }, 422);
+        sets.push("question_id = ?");
+        binds.push(q);
       }
       if (body.youtube_url !== undefined) {
         sets.push("youtube_url = ?");
@@ -406,7 +442,7 @@ export default {
     if (/^\/api\/reels\/\d+\/publish\/?$/.test(url.pathname) || url.pathname.startsWith("/api/publishes")) return publishApi(request, env, url, user);
 
     if (request.method === "POST" && url.pathname === "/api/tts") return tts(request, env, ctx);
-    if (request.method === "GET" && url.pathname === "/api/tts/voices") return json({ provider: "elevenlabs", voices: voicesFor(env) });
+    if (request.method === "GET" && url.pathname === "/api/tts/voices") return json({ provider: "elevenlabs", voices: await voiceList(env) });
 
     if (request.method === "GET" && url.pathname === "/api/questions/random") {
       const params = new URLSearchParams();

@@ -159,3 +159,23 @@ a.btn.connect { background: var(--primary); color: #fff; padding: 9px 16px; font
 .chip.pub-failed { background: #fee2e2; color: var(--danger); }
 .chip.pub-canceled { background: #f1eff5; color: var(--ink-2); }
 .muted .chip { margin-left: 6px; }
+
+/* ---- Editor group colours: each collapsible section gets its own accent ---- */
+.group { --g: #4f46e5; --g-soft: #eef2ff; border-left: 4px solid var(--g); }
+.group.g-question { --g: #4f46e5; --g-soft: #eef2ff; }
+.group.g-design { --g: #d97706; --g-soft: #fef3c7; }
+.group.g-audio { --g: #0d9488; --g-soft: #ccfbf1; }
+.group.g-caption { --g: #db2777; --g-soft: #fce7f3; }
+.group > summary::before { content: ""; width: 10px; height: 10px; border-radius: 50%; background: var(--g); flex-shrink: 0; }
+.group[open] > summary { background: var(--g-soft); border-top-right-radius: 11px; }
+.group:not([open]) > summary { border-radius: 0 11px 11px 0; }
+.group:not([open]) > summary:hover { background: var(--g-soft); }
+.group .group-body input:focus, .group .group-body textarea:focus { outline-color: var(--g); }
+
+/* ---- Swap question ---- */
+.swap-open { align-self: flex-start; }
+.swap-box { display: flex; flex-direction: column; gap: 8px; padding: 12px; border: 1px dashed var(--g, var(--primary)); border-radius: 10px; background: #fff; }
+.swap-preview { display: flex; flex-direction: column; gap: 6px; padding: 10px; border-radius: 8px; background: var(--g-soft, #eef2ff); }
+.swap-body { font-weight: 600; line-height: 1.5; }
+.swap-options { margin: 0; padding-left: 4px; list-style: none; font-size: 14px; display: flex; flex-direction: column; gap: 2px; }
+.swap-options li.correct { color: var(--success); font-weight: 600; }

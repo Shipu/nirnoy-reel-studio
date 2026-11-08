@@ -7,7 +7,9 @@ import {
   audioDuration,
   type ApiQuestion,
   diffQuestion,
+  citationsOf,
   fetchQuestion,
+  fetchRandom,
   fetchVoices,
   saveQuestion,
   synthesize,
@@ -19,13 +21,15 @@ import { MCQThumbnail } from "./remotion/MCQThumbnail";
 import { MUSIC, type MusicKey } from "./remotion/music";
 import { ClipPlayer } from "./ClipPlayer";
 import { startMic } from "./recorder";
-import { type ReelRow, STATUS_LABEL, fromData, getReel, loadPrefs, mediaUrl, savePrefs, toData, updateReel, uploadMedia } from "./reels";
+import { type ReelRow, STATUS_LABEL, fromData, getReel, listReels, loadPrefs, mediaUrl, savePrefs, toData, updateReel, uploadMedia } from "./reels";
 import { navigate } from "./router";
+import { syncBuiltinVoices } from "./voices";
 import { PublishDialog } from "./PublishDialog";
 import { CAPTION_TABS, type CaptionTab, type Captions, PLATFORM_INFO, type Platform, captionLength, generateCaptions } from "./captions";
 import { FPS, HEIGHT, type ReelProps, SEGMENTS, type SegmentKey, THEMES, type ThemeKey, type VoiceClip, WIDTH, themeOf, durationInFrames, hasExplanation } from "./remotion/types";
 
 type ClipSource = NonNullable<VoiceClip["source"]>;
+const SHOW_MAKE_ALL = false;
 
 const downloadBlob = (blob: Blob, name: string) => {
   const url = URL.createObjectURL(blob);
@@ -69,7 +73,8 @@ export function Editor({ reelId }: { reelId: number }) {
     fetchVoices()
       .then((r) => {
         setVoices(r.voices);
-        setVoice((v) => v || r.voices[0]?.id || "");
+        // Shipu's own ElevenLabs voice is the default when the account has it.
+        setVoice((v) => v || (r.voices.find((x) => /^shipu\b/i.test(x.label)) ?? r.voices[0])?.id || "");
       })
       .catch(() => undefined);
   }, []);
@@ -89,14 +94,16 @@ export function Editor({ reelId }: { reelId: number }) {
         setOriginal(q);
         hadData.current = row.data !== null;
         if (row.data) {
-          const p = fromData(reelId, row.data);
-          setProps(p);
-          setScripts(row.data.scripts ?? narrationScripts(p));
+          const loaded = fromData(reelId, row.data);
+          const sc = row.data.scripts ?? narrationScripts(loaded);
+          setProps(syncBuiltinVoices(loaded, sc));
+          setScripts(sc);
           setCaptionEdits(row.data.captions ?? {});
         } else if (q) {
           const p = { ...toReelProps(q), ...loadPrefs() };
-          setProps(p);
-          setScripts(narrationScripts(p));
+          const sc = narrationScripts(p);
+          setProps(syncBuiltinVoices(p, sc));
+          setScripts(sc);
         } else {
           throw new Error(`প্রশ্ন #${row.question_id} আনা গেল না।`);
         }
@@ -132,6 +139,11 @@ export function Editor({ reelId }: { reelId: number }) {
     return () => clearTimeout(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props, scripts, captionEdits, ready]);
+
+  // Changing a recorded default line drops Shipu's recording; putting the line back brings it back.
+  useEffect(() => {
+    if (ready) setProps((p) => (p ? syncBuiltinVoices(p, scripts) : p));
+  }, [scripts?.think, scripts?.cta, ready]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (props) savePrefs(props);
@@ -272,6 +284,60 @@ export function Editor({ reelId }: { reelId: number }) {
   /** Takes a clip off (or all clips); the next autosave deletes the files from R2. */
   const removeClip = (key?: SegmentKey) => setProps((p) => (p ? { ...p, voice: key ? { ...p.voice, [key]: null } : {} } : p));
 
+  // ---- Swap the question: pick another by ID or at random, preview it, then replace. ----
+  // Keeps the design, music, the "think" and closing lines and their voices; resets everything
+  // that came from the old question (text, its voice clips, captions).
+  const [swap, setSwap] = useState<{ id: string; candidate: ApiQuestion | null; others: ReelRow[]; busy: boolean } | null>(null);
+  const findQuestion = async (fn: () => Promise<ApiQuestion>) => {
+    setSwap((w) => (w ? { ...w, busy: true } : w));
+    try {
+      const q = await fn();
+      const others = (await listReels({ question_id: q.id }).catch(() => [])).filter((r) => r.id !== reelId);
+      setSwap((w) => (w ? { ...w, candidate: q, others, busy: false } : w));
+    } catch (e) {
+      setSwap((w) => (w ? { ...w, busy: false } : w));
+      setStatus({ kind: "error", text: (e as Error).message });
+    }
+  };
+  const randomQuestion = () =>
+    findQuestion(async () => {
+      for (let i = 0; i < 4; i++) {
+        const q = await fetchRandom({ exam_name: "bar_council", year: "", topic_id: "", skip_used: true });
+        if (q.id !== props?.questionId) return q;
+      }
+      throw new Error("অন্য কোনো প্রশ্ন পাওয়া গেল না।");
+    });
+  const applyQuestion = async (q: ApiQuestion) => {
+    if (!props) return;
+    if (reel?.status === "published" && !window.confirm("এই reel আগেই প্রকাশিত। তবুও প্রশ্ন বদলাবেন? প্রকাশিত post বদলাবে না।")) return;
+    const next = toReelProps(q);
+    const keep = { think: props.voice.think, cta: props.voice.cta };
+    const merged: ReelProps = {
+      ...props,
+      questionId: next.questionId,
+      act: next.act,
+      source: next.source,
+      body: next.body,
+      options: next.options,
+      correctIndex: next.correctIndex,
+      explanation: next.explanation,
+      voice: Object.fromEntries(Object.entries(keep).filter(([, v]) => v)),
+    };
+    const fresh = narrationScripts(merged);
+    setProps(merged);
+    setScripts((sc) => ({ ...fresh, think: sc?.think ?? fresh.think, cta: sc?.cta ?? fresh.cta }));
+    setCaptionEdits({});
+    setOriginal(q);
+    setSwap(null);
+    try {
+      const row = await updateReel(reelId, { question_id: q.id, ...(reel?.status === "rendered" ? { status: "draft" as const } : {}) });
+      setReel((r) => (r ? { ...r, ...row } : r));
+      setStatus({ kind: "ok", text: `প্রশ্ন বদলে #${q.id} হয়েছে। প্রশ্নের voice আর caption নতুন করে বানাতে হবে; MP4 আবার বানান।` });
+    } catch (e) {
+      setStatus({ kind: "error", text: (e as Error).message });
+    }
+  };
+
   const generated = useMemo(() => (props ? generateCaptions(props) : null), [props]);
   const copyCaption = async (platform: Platform) => {
     if (!generated) return;
@@ -305,12 +371,59 @@ export function Editor({ reelId }: { reelId: number }) {
 
         {props ? (
           <section className="groups">
-            <details className="group" open>
+            <details className="group g-question" open>
               <summary>
                 প্রশ্ন ও উত্তর <small>#{props.questionId}</small>
                 {edit ? <span className="dot" title="ডাটাবেসে সেভ হয়নি" /> : null}
               </summary>
               <div className="group-body">
+                {swap ? (
+                  <div className="swap-box">
+                    <div className="field-title">অন্য প্রশ্ন বাছুন</div>
+                    <div className="row">
+                      <input inputMode="numeric" placeholder="Question ID" value={swap.id} onChange={(e) => setSwap({ ...swap, id: e.target.value.replace(/\D/g, "") })} />
+                      <button disabled={swap.busy || !swap.id} onClick={() => findQuestion(() => fetchQuestion(Number(swap.id)))}>
+                        আনুন
+                      </button>
+                      <button className="secondary" disabled={swap.busy} onClick={randomQuestion} title="বার কাউন্সিল, আগে বানানো প্রশ্ন বাদ দিয়ে">
+                        Random
+                      </button>
+                    </div>
+                    {swap.busy ? <p className="muted">খুঁজছি…</p> : null}
+                    {swap.candidate ? (
+                      <div className="swap-preview">
+                        <div className="muted">
+                          #{swap.candidate.id}
+                          {citationsOf(swap.candidate).map((c) => ` · ${c}`).join("")}
+                        </div>
+                        <div className="swap-body">{toReelProps(swap.candidate).body}</div>
+                        <ol className="swap-options">
+                          {toReelProps(swap.candidate).options.map((o, i) => (
+                            <li key={i} className={i === toReelProps(swap.candidate!).correctIndex ? "correct" : ""}>
+                              {o.label}) {o.text}
+                            </li>
+                          ))}
+                        </ol>
+                        {swap.others.length ? (
+                          <p className="muted">এই প্রশ্নে আগে reel আছে: {swap.others.map((r) => `#${r.id} (${STATUS_LABEL[r.status]})`).join(", ")}</p>
+                        ) : null}
+                        <div className="row small">
+                          <button onClick={() => applyQuestion(swap.candidate!)}>এই প্রশ্ন নিন</button>
+                          <button className="secondary" disabled={swap.busy} onClick={randomQuestion}>
+                            আরেকটা Random
+                          </button>
+                        </div>
+                      </div>
+                    ) : null}
+                    <button className="link" onClick={() => setSwap(null)}>
+                      বাতিল
+                    </button>
+                  </div>
+                ) : (
+                  <button className="secondary swap-open" onClick={() => setSwap({ id: "", candidate: null, others: [], busy: false })}>
+                    ↻ প্রশ্ন বদলান
+                  </button>
+                )}
                 <>
                   <label>
                     Act / Topic
@@ -355,7 +468,7 @@ export function Editor({ reelId }: { reelId: number }) {
               </div>
             </details>
 
-            <details className="group" open>
+            <details className="group g-design" open>
               <summary>ডিজাইন ও শেষ পর্দা</summary>
               <div className="group-body">
                 <label>
@@ -395,7 +508,7 @@ export function Editor({ reelId }: { reelId: number }) {
               </div>
             </details>
 
-            <details className="group">
+            <details className="group g-audio">
               <summary>অডিও</summary>
               <div className="group-body">
                 <label>
@@ -482,9 +595,12 @@ export function Editor({ reelId }: { reelId: number }) {
                   })
                 : null}
               <div className="row">
-                <button disabled={voiceBusy} onClick={() => makeVoice()}>
-                  {voiceBusy ? "বানাচ্ছি…" : "সব voice বানান"}
-                </button>
+                {/* Hidden for now (voices are made one segment at a time); flip SHOW_MAKE_ALL to bring it back. */}
+                {SHOW_MAKE_ALL ? (
+                  <button disabled={voiceBusy} onClick={() => makeVoice()}>
+                    {voiceBusy ? "বানাচ্ছি…" : "সব voice বানান"}
+                  </button>
+                ) : null}
                 <button className="secondary" disabled={voiceBusy} onClick={() => setScripts(narrationScripts(props))} title="উপরের লেখা বদলালে narration আবার বানাতে">
                   লেখা আবার সাজান
                 </button>
@@ -498,7 +614,7 @@ export function Editor({ reelId }: { reelId: number }) {
               </div>
             </details>
             {generated ? (
-              <details className="group">
+              <details className="group g-caption">
                 <summary>
                   ক্যাপশন <small>Facebook · Instagram · LinkedIn · TikTok · X · YouTube</small>
                 </summary>

@@ -146,7 +146,7 @@ export const SEGMENTS = ["question", "options", "think", "answer", "explanation"
 export type SegmentKey = (typeof SEGMENTS)[number];
 
 /** One narrated clip: a playable URL, its length, where it came from, and its file name in R2 once saved. */
-export type VoiceClip = { url: string; sec: number; source?: "tts" | "rec" | "file"; file?: string };
+export type VoiceClip = { url: string; sec: number; source?: "tts" | "rec" | "file"; file?: string; builtin?: string };
 
 /** Props the reel template renders. Every field is editable in the studio before rendering. */
 export type ReelProps = {

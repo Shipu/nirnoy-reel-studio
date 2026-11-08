@@ -1,5 +1,6 @@
 import type { Captions } from "./captions";
 import type { ReelProps, SegmentKey, VoiceClip } from "./remotion/types";
+import { builtinClip } from "./voices";
 
 /** A reel as stored by the Worker (D1 row + optional studio state). */
 export type ReelStatus = "draft" | "rendered" | "published";
@@ -16,7 +17,7 @@ export type ReelRow = {
   youtube_url: string | null;
 };
 
-type StoredVoice = { file: string; sec: number; source?: VoiceClip["source"] };
+type StoredVoice = { file?: string; builtin?: string; sec: number; source?: VoiceClip["source"] };
 /** What the studio saves: everything on screen except blob URLs, plus the narration lines. */
 export type ReelData = {
   props: Omit<ReelProps, "voice">;
@@ -49,7 +50,7 @@ export const getReel = (id: number) => request<{ data: ReelRow & { data: ReelDat
 export const createReel = (questionId: number, data: ReelData) =>
   request<{ data: ReelRow }>("/api/reels", { method: "POST", ...jsonBody({ question_id: questionId, data }) }).then((r) => r.data);
 
-export const updateReel = (id: number, patch: { data?: ReelData; status?: ReelStatus; youtube_url?: string | null }) =>
+export const updateReel = (id: number, patch: { data?: ReelData; status?: ReelStatus; youtube_url?: string | null; question_id?: number }) =>
   request<{ data: ReelRow }>(`/api/reels/${id}`, { method: "PATCH", ...jsonBody(patch) }).then((r) => r.data);
 
 export const deleteReel = (id: number) => request(`/api/reels/${id}`, { method: "DELETE" });
@@ -68,6 +69,7 @@ export const toData = (p: ReelProps, scripts: Record<SegmentKey, string> | null,
   const stored: ReelData["voice"] = {};
   for (const [k, v] of Object.entries(voice) as [SegmentKey, VoiceClip | null | undefined][]) {
     if (v?.file) stored[k] = { file: v.file, sec: v.sec, source: v.source };
+    else if (v?.builtin) stored[k] = { builtin: v.builtin, sec: v.sec, source: v.source };
   }
   return { props, voice: stored, scripts, captions };
 };
@@ -75,7 +77,8 @@ export const toData = (p: ReelProps, scripts: Record<SegmentKey, string> | null,
 export const fromData = (id: number, d: ReelData): ReelProps => {
   const voice: ReelProps["voice"] = {};
   for (const [k, v] of Object.entries(d.voice ?? {}) as [SegmentKey, StoredVoice | null][]) {
-    if (v) voice[k] = { url: mediaUrl(id, v.file), sec: v.sec, source: v.source, file: v.file };
+    if (v?.file) voice[k] = { url: mediaUrl(id, v.file), sec: v.sec, source: v.source, file: v.file };
+    else if (v?.builtin) voice[k] = builtinClip(v.builtin);
   }
   return { ...d.props, voice };
 };

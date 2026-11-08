@@ -1,4 +1,5 @@
 import type { ReelProps, SegmentKey } from "./remotion/types";
+import { DEFAULT_CTA_TEXT, DEFAULT_THINK_TEXT } from "./voices";
 
 export type ApiQuestion = {
   id: number;
@@ -27,6 +28,13 @@ const plain = (html: string | null | undefined) => {
 
 /** Drops a leading "সঠিক উত্তর: ঘ) ..." line — the reel already shows the answer. */
 const stripAnswerLine = (text: string) => text.replace(/^\s*সঠিক উত্তর[^\n]*\n+/, "").trim();
+
+/** Every citation on the question (topic, then each criteria group: exam, law/section, …). */
+export const citationsOf = (q: ApiQuestion) => {
+  const topic = q.topics[0];
+  const name = topic ? (topic.name.bn ?? topic.name.en ?? "") : "";
+  return [name, ...q.criteria.map((c) => c.citation)].filter((x) => x && x.trim());
+};
 
 export function toReelProps(q: ApiQuestion): ReelProps {
   const examGroup = q.criteria.find((c) => c.criteria.key === "exam") ?? q.criteria[0];
@@ -127,10 +135,10 @@ export function narrationScripts(p: ReelProps): Record<SegmentKey, string> {
   return {
     question: speakable(p.body),
     options: p.options.map((o) => `${o.label}, ${speakable(o.text)}।`).join(" "),
-    think: "এবার চিন্তা করুন। আপনার হাতে ছয় সেকেন্ড।",
+    think: DEFAULT_THINK_TEXT,
     answer: correct ? `সঠিক উত্তর, ${correct.label}, ${speakable(correct.text)}।` : "",
     explanation: speakable(p.explanation),
-    cta: "চাকরি ও পেশাগত পরীক্ষার MCQ প্রস্তুতির আর্লি অ্যাক্সেস পেতে এখনই ভিজিট করুন, নির্ণয় ডট অ্যাপ।",
+    cta: DEFAULT_CTA_TEXT,
   };
 }
 
