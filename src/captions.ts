@@ -34,24 +34,43 @@ export type CaptionTab = (typeof CAPTION_TABS)[number]["key"];
 type Source = Pick<ReelProps, "body" | "options" | "act" | "source" | "ctaLine" | "ctaUrl">;
 
 const clean = (s: string) => s.replace(/\s+/g, " ").trim();
+/** Option text as shown in posts: stray " ." and a trailing danda/full stop from the source data are dropped. */
+const cleanOption = (s: string) =>
+  clean(s)
+    .replace(/\s+\.(?=\s|$)/g, "")
+    .replace(/[\s।.]+$/, "")
+    .trim();
 const tag = (s: string) => `#${s.replace(/[\s,،।()'’‘"-]+/g, "")}`;
 const unique = (a: string[]) => [...new Set(a.filter((x) => x.length > 1))];
 
-function hashtags(p: Source, extra: string[]) {
-  const act = p.act ? tag(p.act.split(/[,،]/)[0]) : "";
-  const exam = /বার কাউন্সিল/.test(p.source) ? "#BarCouncil" : /জুডিশিয়াল|বিজেএস/i.test(p.source) ? "#BJS" : "";
-  return unique(["#MCQ", "#নির্ণয়", exam, act, ...extra]);
+type Exam = { tag: string; en: string; bn: string };
+/** Which exam the question is from, for hashtags and the English / Bangla keyword lines. */
+function examOf(p: Source): Exam {
+  if (/বার কাউন্সিল/.test(p.source)) return { tag: "#BarCouncil", en: "Bangladesh Bar Council MCQ", bn: "বার কাউন্সিল MCQ" };
+  if (/জুডিশিয়াল|বিজেএস/i.test(p.source)) return { tag: "#BJS", en: "Bangladesh Judicial Service (BJS) MCQ", bn: "বিজেএস MCQ" };
+  return { tag: "", en: "Bangladesh job & professional exam MCQ", bn: "MCQ" };
 }
+
+/**
+ * Search keywords in English (people search in both languages; the brand is "Nirnoy" in Latin
+ * script), placed just before the hashtags.
+ */
+const keywordLine = (e: Exam) => `${e.en} · Law exam preparation · Nirnoy`;
 
 /** X counts every URL as 23 characters; Bengali letters count as 1. */
 export const xLength = (text: string) => text.replace(/(https?:\/\/)?[a-z0-9-]+(\.[a-z0-9-]+)+(\/\S*)?/gi, "x".repeat(23)).length;
 
 export function generateCaptions(p: Source): Captions {
   const body = clean(p.body);
-  const options = p.options.map((o) => `${o.label}) ${clean(o.text)}`);
-  const link = /^https?:\/\//.test(p.ctaUrl) ? p.ctaUrl : `https://${p.ctaUrl}`;
+  const options = p.options.map((o) => `${o.label}) ${cleanOption(o.text)}`);
+  // Posts link to the reel landing page (https://nirnoy.app/reel); a full URL in "বোতামের লেখা" is used as is.
+  const site = /^https?:\/\//.test(p.ctaUrl) ? p.ctaUrl : `https://${p.ctaUrl.replace(/\/+$/, "")}`;
+  const link = /^https?:\/\/[^/]+\/?$/.test(site) ? `${site.replace(/\/+$/, "")}/reel` : site;
   const cta = clean(p.ctaLine);
   const source = p.source ? `উৎস: ${clean(p.source)}` : "";
+  const exam = examOf(p);
+  const act = p.act ? tag(p.act.split(/[,،]/)[0]) : "";
+  const keywords = keywordLine(exam);
   const join = (...parts: (string | false)[]) =>
     parts
       .filter((x): x is string => x !== false)
@@ -60,8 +79,6 @@ export function generateCaptions(p: Source): Captions {
       .trim();
 
   const facebook = join(
-    "🧠 আজকের MCQ",
-    "",
     body,
     "",
     ...options,
@@ -69,14 +86,15 @@ export function generateCaptions(p: Source): Captions {
     "আপনার উত্তর কমেন্টে লিখুন 👇 সঠিক উত্তর ও ব্যাখ্যা ভিডিওর শেষে।",
     source,
     "",
-    `${cta} 👉 ${link}`,
+    `${cta} 👇`,
+    link,
     "",
-    hashtags(p, ["#আইন", "#পরীক্ষাপ্রস্তুতি"]).join(" "),
+    keywords,
+    unique(["#নির্ণয়", exam.tag, "#MCQ", act]).join(" "),
   );
 
+  // Instagram favours 3–5 relevant hashtags.
   const instagram = join(
-    "🧠 আজকের MCQ",
-    "",
     body,
     "",
     ...options,
@@ -85,15 +103,14 @@ export function generateCaptions(p: Source): Captions {
     "আপনার বন্ধুকে ট্যাগ করুন যে এটা পারবে 🤝",
     source,
     "",
-    `${cta} — লিংক বায়োতে 🔗 (${p.ctaUrl})`,
+    cta,
+    `লিংক বায়োতে 🔗 (${p.ctaUrl})`,
     "",
-    "·",
-    hashtags(p, ["#আইন", "#পরীক্ষাপ্রস্তুতি", "#চাকরিরপরীক্ষা", "#LawMCQ", "#StudyReels", "#Bangladesh"]).join(" "),
+    keywords,
+    unique(["#নির্ণয়", exam.tag, "#MCQ", act, "#পরীক্ষাপ্রস্তুতি"]).slice(0, 5).join(" "),
   );
 
   const linkedin = join(
-    "আজকের MCQ — আপনার উত্তর কী?",
-    "",
     body,
     "",
     ...options,
@@ -103,22 +120,26 @@ export function generateCaptions(p: Source): Captions {
     "",
     `পেশাগত ও চাকরির পরীক্ষার প্রস্তুতিতে ব্যাখ্যাসহ MCQ — ${link}`,
     "",
-    hashtags(p, ["#Law", "#ExamPreparation", "#Bangladesh"]).join(" "),
+    keywords,
+    unique([exam.tag, "#Law", "#ExamPreparation"]).slice(0, 3).join(" "),
   );
 
+  // TikTok search reads the caption text, so the exam keywords go right under the question.
   const tiktok = join(
     `${body} 🤔`,
+    p.source ? `${clean(p.source).replace(/,\s*/, " ")}-এর MCQ` : exam.bn,
     "",
     "উত্তর কমেন্টে লিখুন, শেষ পর্যন্ত দেখুন ✅",
-    `${cta} — লিংক বায়োতে`,
+    cta,
+    "লিংক বায়োতে 🔗",
     "",
-    hashtags(p, ["#পরীক্ষাপ্রস্তুতি", "#LawTok", "#fyp"]).join(" "),
+    unique(["#নির্ণয়", exam.tag, "#MCQ", act, "#LawTok"]).slice(0, 5).join(" "),
   );
 
   // X: 280 hard limit. Try with options, then without, then shorten the question.
-  const xTags = hashtags(p, []).slice(0, 3).join(" ");
+  const xTags = unique(["#MCQ", "#নির্ণয়", exam.tag]).slice(0, 3).join(" ");
   const xWith = (q: string, withOptions: boolean) =>
-    join(`🧠 আজকের MCQ: ${q}`, withOptions && "", ...(withOptions ? options : []), "", `উত্তর কমেন্টে 👇 ${link}`, xTags);
+    join(q, withOptions && "", ...(withOptions ? options : []), "", `উত্তর কমেন্টে 👇 ${link}`, xTags);
   let x = xWith(body, true);
   if (xLength(x) > 280) x = xWith(body, false);
   if (xLength(x) > 280) {
@@ -126,9 +147,9 @@ export function generateCaptions(p: Source): Captions {
     x = xWith(`${body.slice(0, Math.max(20, body.length - over - 1))}…`, false);
   }
 
-  const head = "আজকের MCQ: ";
-  const room = 100 - head.length - " #Shorts".length;
-  const youtubeTitle = `${head}${body.length > room ? `${body.slice(0, room - 1)}…` : body} #Shorts`;
+  // YouTube detects Shorts on its own, so the title spends its room on search words instead of #Shorts.
+  const suffix = ` | ${exam.bn}`;
+  const youtubeTitle = body.length + suffix.length <= 100 ? `${body}${suffix}` : body.length > 100 ? `${body.slice(0, 99)}…` : body;
   const youtube = join(
     body,
     "",
@@ -137,10 +158,13 @@ export function generateCaptions(p: Source): Captions {
     "আপনার উত্তর কমেন্টে লিখুন — সঠিক উত্তর ও ব্যাখ্যা ভিডিওতে।",
     source,
     "",
-    `${cta} 👉 ${link}`,
+    `${cta} 👇`,
+    link,
     "",
-    hashtags(p, ["#Shorts"]).join(" "),
+    keywords,
+    unique(["#Shorts", "#নির্ণয়", exam.tag, "#MCQ", act]).join(" "),
   );
+
 
   return { facebook, instagram, linkedin, tiktok, x, youtubeTitle, youtube };
 }

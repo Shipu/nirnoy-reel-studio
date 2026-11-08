@@ -1,5 +1,6 @@
 import { decrypt, encrypt, randomToken } from "./crypto";
-import { facebookAuthUrl, facebookPages } from "./facebook";
+import { FACEBOOK_SCOPES, type FacebookPage, facebookAuthUrl, facebookPages, metaUserToken } from "./facebook";
+import { INSTAGRAM_SCOPES, instagramAccounts } from "./instagram";
 import type { Env } from "./index";
 
 /**
@@ -12,11 +13,21 @@ import type { Env } from "./index";
  *   DELETE /api/channels/:id
  */
 
-export const PLATFORMS = ["facebook"] as const;
+export const PLATFORMS = ["facebook", "instagram"] as const;
 type Platform = (typeof PLATFORMS)[number];
 
 const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json", "cache-control": "no-store" } });
-const callbackUrl = (url: URL, platform: string) => `${url.origin}/oauth/callback/${platform}`;
+/**
+ * Facebook and Instagram share the Meta app and its one registered redirect URI
+ * (/oauth/callback/facebook); which platform it was is stored with the OAuth state.
+ */
+const callbackPath = (platform: string) => (platform === "instagram" ? "facebook" : platform);
+const callbackUrl = (url: URL, platform: string) => `${url.origin}/oauth/callback/${callbackPath(platform)}`;
+const META_SCOPES: Record<Platform, string[]> = { facebook: FACEBOOK_SCOPES, instagram: INSTAGRAM_SCOPES };
+async function metaAccounts(env: Env, platform: Platform, code: string, redirectUri: string): Promise<FacebookPage[]> {
+  const userToken = await metaUserToken(env, code, redirectUri);
+  return platform === "instagram" ? instagramAccounts(env, userToken) : facebookPages(env, userToken);
+}
 type PendingAccount = { id: string; name: string; picture: string | null; token_enc: string };
 
 export async function channelsApi(request: Request, env: Env, url: URL, user: string): Promise<Response> {
@@ -37,7 +48,7 @@ export async function channelsApi(request: Request, env: Env, url: URL, user: st
     await env.DB.prepare("DELETE FROM oauth_pending WHERE created_at < datetime('now', '-1 hour')").run();
     await env.DB.prepare("INSERT INTO oauth_pending (state, platform, created_by) VALUES (?, ?, ?)").bind(state, platform, user).run();
     try {
-      return Response.redirect(facebookAuthUrl(env, callbackUrl(url, platform), state), 302);
+      return Response.redirect(facebookAuthUrl(env, callbackUrl(url, platform), state, META_SCOPES[platform]), 302);
     } catch (e) {
       return json({ message: (e as Error).message }, 500);
     }
@@ -88,19 +99,19 @@ export async function channelsApi(request: Request, env: Env, url: URL, user: st
 /** The platform sends the browser back here after login. */
 export async function oauthCallback(request: Request, env: Env, url: URL): Promise<Response> {
   const m = url.pathname.match(/^\/oauth\/callback\/([a-z]+)\/?$/);
-  const platform = m?.[1] as Platform | undefined;
   const back = (q: string) => Response.redirect(`${url.origin}/channels?${q}`, 302);
-  if (!platform || !PLATFORMS.includes(platform)) return back("error=unknown-platform");
   const state = url.searchParams.get("state") ?? "";
-  const row = await env.DB.prepare("SELECT state FROM oauth_pending WHERE state = ? AND platform = ? AND created_at >= datetime('now', '-1 hour')")
-    .bind(state, platform)
-    .first();
+  const row = await env.DB.prepare("SELECT state, platform FROM oauth_pending WHERE state = ? AND created_at >= datetime('now', '-1 hour')")
+    .bind(state)
+    .first<{ state: string; platform: Platform }>();
   if (!row) return back("error=expired");
+  const platform = row.platform;
+  if (!PLATFORMS.includes(platform) || callbackPath(platform) !== m?.[1]) return back("error=unknown-platform");
   const code = url.searchParams.get("code");
   if (!code) return back(`error=${encodeURIComponent(url.searchParams.get("error_description") ?? url.searchParams.get("error") ?? "denied")}`);
 
   try {
-    const pages = await facebookPages(env, code, callbackUrl(url, platform));
+    const pages = await metaAccounts(env, platform, code, callbackUrl(url, platform));
     const accounts: PendingAccount[] = [];
     for (const p of pages) accounts.push({ id: p.id, name: p.name, picture: p.picture, token_enc: await encrypt(env.TOKEN_KEY, p.token) });
     await env.DB.prepare("UPDATE oauth_pending SET data = ? WHERE state = ?").bind(JSON.stringify(accounts), state).run();

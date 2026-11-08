@@ -2,7 +2,7 @@
 
 export type Channel = {
   id: number;
-  platform: "facebook";
+  platform: "facebook" | "instagram";
   account_id: string;
   name: string;
   picture: string | null;
@@ -36,7 +36,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 const post = (body: unknown) => ({ method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
 
-export const PLATFORM_LABEL: Record<Channel["platform"], string> = { facebook: "Facebook Page" };
+export const PLATFORM_LABEL: Record<Channel["platform"], string> = { facebook: "Facebook Page", instagram: "Instagram" };
 export const PUBLISH_LABEL: Record<PublishStatus, string> = {
   scheduled: "নির্ধারিত",
   publishing: "যাচ্ছে…",

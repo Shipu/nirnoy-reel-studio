@@ -1,6 +1,7 @@
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
 import { channelToken } from "./channels";
 import { facebookReelFinish, facebookReelStart, facebookReelStatus, facebookReelUpload, facebookThumbnail } from "./facebook";
+import { instagramContainer, instagramContainerStatus, instagramPublish, instagramUpload } from "./instagram";
 import type { Env } from "./index";
 
 /**
@@ -52,37 +53,10 @@ export class PublishWorkflow extends WorkflowEntrypoint<Env, Params> {
         return true;
       });
 
-      if (row.platform !== "facebook") throw new Error(`No connector for ${row.platform} yet.`);
-
-      // Upload + finish run as one step, so a half-sent upload is never "finished" later.
-      // No automatic retries here: a retry after a successful "finish" would post the reel twice.
-      // A failure lands as "failed" and you retry from the studio.
-      const videoId = await step.do("upload to Facebook", { retries: { limit: 0, delay: "1 second" }, timeout: "10 minutes" }, async () => {
-        const ch = await channelToken(this.env, row.channel_id);
-        const video = await this.env.MEDIA.get(`reels/${row.reel_id}/video.mp4`);
-        if (!video) throw new Error("Reel has no rendered video — render it first.");
-        const vid = await facebookReelStart(this.env, ch.account_id, ch.token);
-        await facebookReelUpload(this.env, vid, ch.token, await video.arrayBuffer());
-        await facebookReelFinish(this.env, ch.account_id, vid, ch.token, row.caption);
-        await setStatus(this.env, id, { remote_id: vid });
-        const thumb = await this.env.MEDIA.get(`reels/${row.reel_id}/thumb.jpg`);
-        if (thumb) await facebookThumbnail(this.env, vid, ch.token, await thumb.arrayBuffer());
-        return vid;
-      });
-
-      // Facebook processes the video for a while; check every 20 s for up to ~20 minutes.
-      let url: string | null = null;
-      for (let i = 0; i < 60; i++) {
-        const s = await step.do(`check processing ${i}`, { retries: { limit: 3, delay: "10 seconds" } }, async () => {
-          const ch = await channelToken(this.env, row.channel_id);
-          return facebookReelStatus(this.env, videoId, ch.token);
-        });
-        url = s.url ?? url;
-        if (s.state === "error") throw new Error(s.error);
-        if (s.state === "ready") break;
-        if (i === 59) throw new Error("Facebook is still processing after 20 minutes — check the Page; it may appear later.");
-        await step.sleep(`wait ${i}`, "20 seconds");
-      }
+      let url: string | null;
+      if (row.platform === "facebook") url = await this.facebook(row, step);
+      else if (row.platform === "instagram") url = await this.instagram(row, step);
+      else throw new Error(`No connector for ${row.platform} yet.`);
 
       await step.do("mark published", async () => {
         await setStatus(this.env, id, { status: "published", url, error: null });
@@ -97,6 +71,78 @@ export class PublishWorkflow extends WorkflowEntrypoint<Env, Params> {
       });
       return { failed: (e as Error).message };
     }
+  }
+
+  /** Facebook Page Reel: start → upload → finish, then wait for processing. Returns the link. */
+  private async facebook(row: PublishRow, step: WorkflowStep): Promise<string | null> {
+    const id = row.id;
+    // Upload + finish run as one step, so a half-sent upload is never "finished" later.
+    // No automatic retries here: a retry after a successful "finish" would post the reel twice.
+    // A failure lands as "failed" and you retry from the studio.
+    const videoId = await step.do("upload to Facebook", { retries: { limit: 0, delay: "1 second" }, timeout: "10 minutes" }, async () => {
+      const ch = await channelToken(this.env, row.channel_id);
+      const video = await this.env.MEDIA.get(`reels/${row.reel_id}/video.mp4`);
+      if (!video) throw new Error("Reel has no rendered video — render it first.");
+      const vid = await facebookReelStart(this.env, ch.account_id, ch.token);
+      await facebookReelUpload(this.env, vid, ch.token, await video.arrayBuffer());
+      await facebookReelFinish(this.env, ch.account_id, vid, ch.token, row.caption);
+      await setStatus(this.env, id, { remote_id: vid });
+      const thumb = await this.env.MEDIA.get(`reels/${row.reel_id}/thumb.jpg`);
+      if (thumb) await facebookThumbnail(this.env, vid, ch.token, await thumb.arrayBuffer());
+      return vid;
+    });
+
+    // Facebook processes the video for a while; check every 20 s for up to ~20 minutes.
+    let url: string | null = null;
+    for (let i = 0; i < 60; i++) {
+      const s = await step.do(`check processing ${i}`, { retries: { limit: 3, delay: "10 seconds" } }, async () => {
+        const ch = await channelToken(this.env, row.channel_id);
+        return facebookReelStatus(this.env, videoId, ch.token);
+      });
+      url = s.url ?? url;
+      if (s.state === "error") throw new Error(s.error);
+      if (s.state === "ready") break;
+      if (i === 59) throw new Error("Facebook is still processing after 20 minutes — check the Page; it may appear later.");
+      await step.sleep(`wait ${i}`, "20 seconds");
+    }
+    return url;
+  }
+
+  /** Instagram Reel: container + resumable upload, wait FINISHED, then media_publish. Returns the link. */
+  private async instagram(row: PublishRow, step: WorkflowStep): Promise<string | null> {
+    const id = row.id;
+    // Container + upload: retry-safe on its own (an unpublished container is never posted), but kept
+    // at one attempt so a failure is visible; you retry from the studio.
+    const containerId = await step.do("upload to Instagram", { retries: { limit: 0, delay: "1 second" }, timeout: "10 minutes" }, async () => {
+      const ch = await channelToken(this.env, row.channel_id);
+      const video = await this.env.MEDIA.get(`reels/${row.reel_id}/video.mp4`);
+      if (!video) throw new Error("Reel has no rendered video — render it first.");
+      const c = await instagramContainer(this.env, ch.account_id, ch.token, row.caption);
+      await instagramUpload(c.uri, ch.token, await video.arrayBuffer());
+      await setStatus(this.env, id, { remote_id: c.id });
+      return c.id;
+    });
+
+    // Instagram processes the upload; check every 20 s for up to ~20 minutes.
+    for (let i = 0; i < 60; i++) {
+      const s = await step.do(`check processing ${i}`, { retries: { limit: 3, delay: "10 seconds" } }, async () => {
+        const ch = await channelToken(this.env, row.channel_id);
+        return instagramContainerStatus(this.env, containerId, ch.token);
+      });
+      if (s.state === "error") throw new Error(s.error);
+      if (s.state === "ready") break;
+      if (i === 59) throw new Error("Instagram is still processing after 20 minutes.");
+      await step.sleep(`wait ${i}`, "20 seconds");
+    }
+
+    // Publishing is the irreversible part: never retried automatically (no duplicate posts).
+    const published = await step.do("publish on Instagram", { retries: { limit: 0, delay: "1 second" } }, async () => {
+      const ch = await channelToken(this.env, row.channel_id);
+      const r = await instagramPublish(this.env, ch.account_id, containerId, ch.token);
+      await setStatus(this.env, id, { remote_id: r.mediaId });
+      return r;
+    });
+    return published.url;
   }
 }
 

@@ -6,52 +6,69 @@ import type { Env } from "./index";
  */
 
 const GRAPH_VERSION = (env: Env) => env.META_GRAPH_VERSION || "v23.0";
-const graph = (env: Env) => `${env.META_GRAPH_BASE || "https://graph.facebook.com"}/${GRAPH_VERSION(env)}`;
-const rupload = (env: Env) => `${env.META_RUPLOAD_BASE || "https://rupload.facebook.com"}/video-upload/${GRAPH_VERSION(env)}`;
+export const graph = (env: Env) => `${env.META_GRAPH_BASE || "https://graph.facebook.com"}/${GRAPH_VERSION(env)}`;
+export const rupload = (env: Env) => `${env.META_RUPLOAD_BASE || "https://rupload.facebook.com"}/video-upload/${GRAPH_VERSION(env)}`;
 
 export const FACEBOOK_SCOPES = ["pages_show_list", "pages_read_engagement", "pages_manage_posts", "business_management"];
 
 export type FacebookPage = { id: string; name: string; picture: string | null; token: string };
 
-async function call<T>(res: Response): Promise<T> {
+export async function call<T>(res: Response): Promise<T> {
   const data = (await res.json().catch(() => ({}))) as T & { error?: { message?: string; code?: number } };
   if (!res.ok || data.error) throw new Error(`Facebook: ${data.error?.message ?? `HTTP ${res.status}`}`);
   return data;
 }
 
-export function facebookAuthUrl(env: Env, redirectUri: string, state: string) {
+export function facebookAuthUrl(env: Env, redirectUri: string, state: string, scopes: string[] = FACEBOOK_SCOPES) {
   if (!env.META_APP_ID) throw new Error("META_APP_ID secret is not set on the Worker.");
   const u = new URL(`${env.META_DIALOG_BASE || "https://www.facebook.com"}/${GRAPH_VERSION(env)}/dialog/oauth`);
   u.searchParams.set("client_id", env.META_APP_ID);
   u.searchParams.set("redirect_uri", redirectUri);
   u.searchParams.set("state", state);
   u.searchParams.set("response_type", "code");
-  u.searchParams.set("scope", FACEBOOK_SCOPES.join(","));
+  u.searchParams.set("scope", scopes.join(","));
   return u.toString();
 }
 
-/** Code → long-lived user token → the Pages you manage, each with its own Page token. */
-export async function facebookPages(env: Env, code: string, redirectUri: string): Promise<FacebookPage[]> {
+/** OAuth code → long-lived user token (a Page token obtained from it does not expire). */
+export async function metaUserToken(env: Env, code: string, redirectUri: string): Promise<string> {
   if (!env.META_APP_ID || !env.META_APP_SECRET) throw new Error("META_APP_ID / META_APP_SECRET secrets are not set on the Worker.");
   const base = graph(env);
   const short = await call<{ access_token: string }>(
     await fetch(`${base}/oauth/access_token?${new URLSearchParams({ client_id: env.META_APP_ID, client_secret: env.META_APP_SECRET, redirect_uri: redirectUri, code })}`),
   );
-  // A Page token obtained from a long-lived user token does not expire.
   const long = await call<{ access_token: string }>(
     await fetch(
       `${base}/oauth/access_token?${new URLSearchParams({ grant_type: "fb_exchange_token", client_id: env.META_APP_ID, client_secret: env.META_APP_SECRET, fb_exchange_token: short.access_token })}`,
     ),
   );
-  const pages: FacebookPage[] = [];
-  let next: string | undefined = `${base}/me/accounts?${new URLSearchParams({ fields: "id,name,access_token,picture{url}", limit: "100", access_token: long.access_token })}`;
+  return long.access_token;
+}
+
+export type MetaPageRow = {
+  id: string;
+  name: string;
+  access_token: string;
+  picture?: { data?: { url?: string } };
+  instagram_business_account?: { id: string; username?: string; profile_picture_url?: string };
+};
+
+/** Every Page the user manages (paged), with the requested fields. */
+export async function metaPages(env: Env, userToken: string, fields: string): Promise<MetaPageRow[]> {
+  const rows: MetaPageRow[] = [];
+  let next: string | undefined = `${graph(env)}/me/accounts?${new URLSearchParams({ fields, limit: "100", access_token: userToken })}`;
   while (next) {
-    const page: { data: { id: string; name: string; access_token: string; picture?: { data?: { url?: string } } }[]; paging?: { next?: string } } =
-      await call(await fetch(next));
-    for (const p of page.data) pages.push({ id: p.id, name: p.name, picture: p.picture?.data?.url ?? null, token: p.access_token });
+    const page: { data: MetaPageRow[]; paging?: { next?: string } } = await call(await fetch(next));
+    rows.push(...page.data);
     next = page.paging?.next;
   }
-  return pages;
+  return rows;
+}
+
+/** The Pages you manage, each with its own Page token. */
+export async function facebookPages(env: Env, userToken: string): Promise<FacebookPage[]> {
+  const rows = await metaPages(env, userToken, "id,name,access_token,picture{url}");
+  return rows.map((p) => ({ id: p.id, name: p.name, picture: p.picture?.data?.url ?? null, token: p.access_token }));
 }
 
 /** Starts a Reel upload session; returns the video id. */
