@@ -22,14 +22,17 @@ export async function instagramAccounts(env: Env, userToken: string): Promise<Fa
     });
 }
 
-/** Creates a Reels container for a resumable upload; returns its id and the upload URL. */
-export async function instagramContainer(env: Env, igUserId: string, token: string, caption: string) {
-  const r = await call<{ id: string; uri?: string }>(
-    await fetch(`${graph(env)}/${igUserId}/media`, {
-      method: "POST",
-      body: new URLSearchParams({ media_type: "REELS", upload_type: "resumable", caption, share_to_feed: "true", access_token: token }),
-    }),
-  );
+/**
+ * Creates a Reels container for a resumable upload; returns its id and the upload URL.
+ * Instagram takes a cover image only by public URL, so the studio passes a short-lived presigned
+ * R2 link to the thumbnail when R2 credentials are set, or else a video moment (thumb_offset).
+ */
+export async function instagramContainer(env: Env, igUserId: string, token: string, caption: string, cover: { url?: string | null; offsetMs?: number | null }) {
+  const body = new URLSearchParams({ media_type: "REELS", upload_type: "resumable", caption, share_to_feed: "true", access_token: token });
+  // An exact cover image (presigned R2 link to the studio thumbnail) wins; else a video moment.
+  if (cover.url) body.set("cover_url", cover.url);
+  else if (cover.offsetMs != null) body.set("thumb_offset", String(cover.offsetMs));
+  const r = await call<{ id: string; uri?: string }>(await fetch(`${graph(env)}/${igUserId}/media`, { method: "POST", body }));
   const base = env.META_RUPLOAD_BASE || "https://rupload.facebook.com";
   const version = env.META_GRAPH_VERSION || "v23.0";
   return { id: r.id, uri: r.uri ?? `${base}/ig-api-upload/${version}/${r.id}` };

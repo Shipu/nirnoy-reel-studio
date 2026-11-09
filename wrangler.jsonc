@@ -17,7 +17,10 @@
 		"NIRNOY_API_BASE": "https://stage-backend.nirnoy.app",
 		// From Cloudflare Zero Trust → Access → your application.
 		"ACCESS_TEAM_DOMAIN": "https://nirnoy.cloudflareaccess.com",
-		"ACCESS_AUD": "8c05842b64466f4bbddc794e6567148e81922d948fae118b660935871f4e8a8b"
+		"ACCESS_AUD": "8c05842b64466f4bbddc794e6567148e81922d948fae118b660935871f4e8a8b",
+		// For presigned media links (Instagram cover); keys are the R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY secrets.
+		"R2_ACCOUNT_ID": "428aa01286383eef3530235211f6d304",
+		"R2_BUCKET_NAME": "nirnoy-reel-studio-media"
 	},
 	"d1_databases": [
 		{

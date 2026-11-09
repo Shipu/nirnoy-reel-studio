@@ -7,6 +7,7 @@ import {
   createReel,
   deleteReel,
   duplicateReel,
+  fromData,
   getReel,
   listReels,
   loadPrefs,
@@ -168,7 +169,7 @@ export function ReelsPage() {
       {publishFor ? (
         <PublishDialog
           reelId={publishFor.id}
-          props={publishFor.data.props}
+          props={fromData(publishFor.id, publishFor.data)}
           captions={publishFor.data.captions}
           onClose={() => {
             setPublishFor(null);

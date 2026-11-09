@@ -13,13 +13,12 @@ import {
   retryPublish,
   showDhaka,
 } from "./channels";
-import type { ReelProps } from "./remotion/types";
+import { type ReelProps, coverMoment } from "./remotion/types";
 import { navigate } from "./router";
 
-type Source = Omit<ReelProps, "voice">;
 
 /** Pick channels, check each caption, post now or at a Bangladesh time; shows this reel's posts. */
-export function PublishDialog({ reelId, props, captions, onClose }: { reelId: number; props: Source; captions?: Partial<Captions>; onClose: () => void }) {
+export function PublishDialog({ reelId, props, captions, onClose }: { reelId: number; props: ReelProps; captions?: Partial<Captions>; onClose: () => void }) {
   const [channels, setChannels] = useState<Channel[] | null>(null);
   const [rows, setRows] = useState<Publish[]>([]);
   const [chosen, setChosen] = useState<Set<number>>(new Set());
@@ -53,7 +52,7 @@ export function PublishDialog({ reelId, props, captions, onClose }: { reelId: nu
     setMsg({ kind: "busy", text: "পাঠাচ্ছি…" });
     try {
       const targets = channels.filter((c) => chosen.has(c.id)).map((c) => ({ channel_id: c.id, caption: captionFor(c) }));
-      const r = await publishReel(reelId, targets, when === "at" ? dhakaToIso(at) : null);
+      const r = await publishReel(reelId, targets, when === "at" ? dhakaToIso(at) : null, Math.round(coverMoment(props) * 1000));
       setMsg({ kind: "ok", text: when === "at" ? `${r.created.length}টি post নির্ধারিত হয়েছে (${at.replace("T", " ")})।` : `${r.created.length}টি post যাচ্ছে — কয়েক মিনিটে প্রকাশ হবে।` });
       setChosen(new Set());
       await refreshRows();

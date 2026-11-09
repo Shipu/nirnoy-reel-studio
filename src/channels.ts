@@ -53,8 +53,8 @@ export const addAccounts = (state: string, ids: string[]) =>
   request<{ added: number }>(`/api/channels/pending/${encodeURIComponent(state)}`, post({ account_ids: ids }));
 export const removeChannel = (id: number) => request(`/api/channels/${id}`, { method: "DELETE" });
 
-export const publishReel = (reelId: number, targets: { channel_id: number; caption: string }[], scheduledAt: string | null) =>
-  request<{ created: number[] }>(`/api/reels/${reelId}/publish`, post({ targets, scheduled_at: scheduledAt }));
+export const publishReel = (reelId: number, targets: { channel_id: number; caption: string }[], scheduledAt: string | null, coverOffsetMs?: number) =>
+  request<{ created: number[] }>(`/api/reels/${reelId}/publish`, post({ targets, scheduled_at: scheduledAt, cover_offset_ms: coverOffsetMs }));
 export const listPublishes = (reelId?: number) => request<{ data: Publish[] }>(`/api/publishes${reelId ? `?reel_id=${reelId}` : ""}`).then((r) => r.data);
 export const retryPublish = (id: number) => request(`/api/publishes/${id}/retry`, { method: "POST" });
 export const cancelPublish = (id: number) => request(`/api/publishes/${id}`, { method: "DELETE" });

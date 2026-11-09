@@ -2,6 +2,7 @@ import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloud
 import { channelToken } from "./channels";
 import { FB_SCHEDULE_MAX_MS, FB_SCHEDULE_MIN_MS, facebookDeleteVideo, facebookReelFinish, facebookReelStart, facebookReelStatus, facebookReelUpload, facebookThumbnail } from "./facebook";
 import { instagramContainer, instagramContainerStatus, instagramPublish, instagramUpload } from "./instagram";
+import { presignGet } from "./presign";
 import type { Env } from "./index";
 
 /**
@@ -17,7 +18,17 @@ import type { Env } from "./index";
  */
 
 type Params = { publishId: number };
-type PublishRow = { id: number; reel_id: number; channel_id: number; platform: string; caption: string; scheduled_at: string | null; status: string; remote_id: string | null };
+type PublishRow = {
+  id: number;
+  reel_id: number;
+  channel_id: number;
+  platform: string;
+  caption: string;
+  scheduled_at: string | null;
+  status: string;
+  remote_id: string | null;
+  cover_offset_ms: number | null;
+};
 
 const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json", "cache-control": "no-store" } });
 const COLUMNS = "p.id, p.reel_id, p.channel_id, p.platform, p.caption, p.scheduled_at, p.status, p.remote_id, p.url, p.error, p.created_by, p.created_at, p.updated_at, c.name AS channel_name, c.picture AS channel_picture";
@@ -137,6 +148,21 @@ export class PublishWorkflow extends WorkflowEntrypoint<Env, Params> {
     return { url };
   }
 
+  /** A 1-hour presigned link to the reel's thumbnail, if R2 credentials are set and a thumbnail exists. */
+  private async coverUrl(reelId: number): Promise<string | null> {
+    const e = this.env;
+    if (!e.R2_ACCOUNT_ID || !e.R2_BUCKET_NAME || !e.R2_ACCESS_KEY_ID || !e.R2_SECRET_ACCESS_KEY) return null;
+    const key = `reels/${reelId}/thumb.jpg`;
+    if (!(await e.MEDIA.head(key))) return null;
+    return presignGet({
+      host: `${e.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
+      path: `/${e.R2_BUCKET_NAME}/${key}`,
+      accessKeyId: e.R2_ACCESS_KEY_ID,
+      secretAccessKey: e.R2_SECRET_ACCESS_KEY,
+      expiresSec: 3600,
+    });
+  }
+
   /** Instagram Reel: container + resumable upload, wait FINISHED, then media_publish. Returns the link. */
   private async instagram(row: PublishRow, step: WorkflowStep): Promise<string | null> {
     const id = row.id;
@@ -146,7 +172,10 @@ export class PublishWorkflow extends WorkflowEntrypoint<Env, Params> {
       const ch = await channelToken(this.env, row.channel_id);
       const video = await this.env.MEDIA.get(`reels/${row.reel_id}/video.mp4`);
       if (!video) throw new Error("Reel has no rendered video — render it first.");
-      const c = await instagramContainer(this.env, ch.account_id, ch.token, row.caption);
+      const c = await instagramContainer(this.env, ch.account_id, ch.token, row.caption, {
+        url: await this.coverUrl(row.reel_id),
+        offsetMs: row.cover_offset_ms,
+      });
       await instagramUpload(c.uri, ch.token, await video.arrayBuffer());
       await setStatus(this.env, id, { remote_id: c.id });
       return c.id;
@@ -185,7 +214,13 @@ export async function publishApi(request: Request, env: Env, url: URL, user: str
   const reel = path.match(/^\/api\/reels\/(\d+)\/publish$/);
   if (reel && request.method === "POST") {
     const reelId = Number(reel[1]);
-    const body = (await request.json().catch(() => null)) as { targets?: { channel_id?: unknown; caption?: unknown }[]; scheduled_at?: unknown } | null;
+    const body = (await request.json().catch(() => null)) as {
+      targets?: { channel_id?: unknown; caption?: unknown }[];
+      scheduled_at?: unknown;
+      cover_offset_ms?: unknown;
+    } | null;
+    const cover = Number(body?.cover_offset_ms);
+    const coverMs = Number.isFinite(cover) && cover >= 0 && cover < 600_000 ? Math.round(cover) : null;
     const targets = (body?.targets ?? []).filter((t) => Number.isInteger(Number(t.channel_id)) && typeof t.caption === "string");
     if (!targets.length) return json({ message: "কোনো channel বাছা হয়নি।" }, 422);
     if (!(await env.MEDIA.head(`reels/${reelId}/video.mp4`))) return json({ message: "আগে MP4 বানান — reel-এ কোনো video জমা নেই।" }, 422);
@@ -207,9 +242,9 @@ export async function publishApi(request: Request, env: Env, url: URL, user: str
     }
     for (const { t, ch } of chans) {
       const row = await env.DB.prepare(
-        "INSERT INTO publishes (reel_id, channel_id, platform, caption, scheduled_at, created_by) VALUES (?, ?, ?, ?, ?, ?) RETURNING id",
+        "INSERT INTO publishes (reel_id, channel_id, platform, caption, scheduled_at, cover_offset_ms, created_by) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id",
       )
-        .bind(reelId, ch.id, ch.platform, String(t.caption), scheduled, user)
+        .bind(reelId, ch.id, ch.platform, String(t.caption), scheduled, coverMs, user)
         .first<{ id: number }>();
       if (row) {
         await start(env, row.id);

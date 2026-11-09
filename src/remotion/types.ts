@@ -250,6 +250,16 @@ export const timeline = (p: ReelProps) => {
   };
 };
 
+/**
+ * The moment that looks like the thumbnail: question and every option on screen, before the
+ * countdown starts. Used as the Instagram cover (seconds).
+ */
+export const coverMoment = (p: ReelProps) => {
+  const t = timeline(p);
+  const settled = t.optionsIn + 0.5 + Math.max(0, p.options.length - 1) * 0.12 + 0.7;
+  return Math.max(t.optionsIn + 0.3, Math.min(settled, t.thinkStart - 0.1));
+};
+
 export const durationInFrames = (p: ReelProps) => Math.round(timeline(p).end * FPS);
 
 /** Shrinks text as it gets longer so nothing spills off the 1080x1920 frame. */

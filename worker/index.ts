@@ -11,6 +11,14 @@ export interface Env {
   MEDIA: R2Bucket;
   /** Posts a reel to a channel (worker/publish.ts). */
   PUBLISH: Workflow<{ publishId: number }>;
+  /**
+   * R2 S3-API credentials (read-only, this bucket) used to presign short-lived links to media,
+   * e.g. the Instagram cover image. Without them Instagram picks a video moment as the cover.
+   */
+  R2_ACCOUNT_ID?: string;
+  R2_BUCKET_NAME?: string;
+  R2_ACCESS_KEY_ID?: string;
+  R2_SECRET_ACCESS_KEY?: string;
   /** 32 random bytes, base64: encrypts platform tokens at rest. */
   TOKEN_KEY?: string;
   /** Meta (Facebook / Instagram) app credentials, secrets. */
