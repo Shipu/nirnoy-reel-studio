@@ -154,13 +154,21 @@ export class PublishWorkflow extends WorkflowEntrypoint<Env, Params> {
     if (!e.R2_ACCOUNT_ID || !e.R2_BUCKET_NAME || !e.R2_ACCESS_KEY_ID || !e.R2_SECRET_ACCESS_KEY) return null;
     const key = `reels/${reelId}/thumb.jpg`;
     if (!(await e.MEDIA.head(key))) return null;
-    return presignGet({
+    const url = await presignGet({
       host: `${e.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
       path: `/${e.R2_BUCKET_NAME}/${key}`,
       accessKeyId: e.R2_ACCESS_KEY_ID,
       secretAccessKey: e.R2_SECRET_ACCESS_KEY,
       expiresSec: 3600,
     });
+    // Instagram downloads this link itself; check it really serves the image (bad R2 keys give a 403 XML page).
+    const probe = await fetch(url).catch((err: Error) => ({ ok: false, status: 0, headers: new Headers(), text: async () => err.message }) as const);
+    const type = probe.headers.get("content-type") ?? "";
+    if (!probe.ok || !type.startsWith("image/")) {
+      console.error(`cover link unusable: HTTP ${probe.status} ${type}`, (await probe.text().catch(() => "")).slice(0, 500));
+      return null;
+    }
+    return url;
   }
 
   /** Instagram Reel: container + resumable upload, wait FINISHED, then media_publish. Returns the link. */

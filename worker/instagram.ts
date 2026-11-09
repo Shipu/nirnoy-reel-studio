@@ -28,11 +28,22 @@ export async function instagramAccounts(env: Env, userToken: string): Promise<Fa
  * R2 link to the thumbnail when R2 credentials are set, or else a video moment (thumb_offset).
  */
 export async function instagramContainer(env: Env, igUserId: string, token: string, caption: string, cover: { url?: string | null; offsetMs?: number | null }) {
-  const body = new URLSearchParams({ media_type: "REELS", upload_type: "resumable", caption, share_to_feed: "true", access_token: token });
-  // An exact cover image (presigned R2 link to the studio thumbnail) wins; else a video moment.
-  if (cover.url) body.set("cover_url", cover.url);
-  else if (cover.offsetMs != null) body.set("thumb_offset", String(cover.offsetMs));
-  const r = await call<{ id: string; uri?: string }>(await fetch(`${graph(env)}/${igUserId}/media`, { method: "POST", body }));
+  const create = async (useCover: boolean) => {
+    const body = new URLSearchParams({ media_type: "REELS", upload_type: "resumable", caption, share_to_feed: "true", access_token: token });
+    // An exact cover image (presigned R2 link to the studio thumbnail) wins; else a video moment.
+    if (useCover && cover.url) body.set("cover_url", cover.url);
+    else if (cover.offsetMs != null) body.set("thumb_offset", String(cover.offsetMs));
+    return call<{ id: string; uri?: string }>(await fetch(`${graph(env)}/${igUserId}/media`, { method: "POST", body }), "Instagram");
+  };
+  let r: { id: string; uri?: string };
+  try {
+    r = await create(true);
+  } catch (e) {
+    // Instagram could not use the cover image ("Only photo or video can be accepted…"): post with a video-moment cover instead.
+    if (!cover.url) throw e;
+    console.error(`instagram cover_url rejected, using thumb_offset: ${(e as Error).message}`);
+    r = await create(false);
+  }
   const base = env.META_RUPLOAD_BASE || "https://rupload.facebook.com";
   const version = env.META_GRAPH_VERSION || "v23.0";
   return { id: r.id, uri: r.uri ?? `${base}/ig-api-upload/${version}/${r.id}` };
@@ -45,6 +56,7 @@ export async function instagramUpload(uri: string, token: string, video: ArrayBu
       headers: { Authorization: `OAuth ${token}`, offset: "0", file_size: String(video.byteLength) },
       body: video,
     }),
+    "Instagram",
   );
 }
 
@@ -52,6 +64,7 @@ export async function instagramUpload(uri: string, token: string, video: ArrayBu
 export async function instagramContainerStatus(env: Env, containerId: string, token: string) {
   const r = await call<{ status_code?: string; status?: string }>(
     await fetch(`${graph(env)}/${containerId}?${new URLSearchParams({ fields: "status_code,status", access_token: token })}`),
+    "Instagram",
   );
   if (r.status_code === "FINISHED") return { state: "ready" as const };
   if (r.status_code === "ERROR" || r.status_code === "EXPIRED") return { state: "error" as const, error: `Instagram: ${r.status ?? r.status_code}` };
@@ -61,6 +74,7 @@ export async function instagramContainerStatus(env: Env, containerId: string, to
 export async function instagramPublish(env: Env, igUserId: string, containerId: string, token: string) {
   const r = await call<{ id: string }>(
     await fetch(`${graph(env)}/${igUserId}/media_publish`, { method: "POST", body: new URLSearchParams({ creation_id: containerId, access_token: token }) }),
+    "Instagram",
   );
   const media = await call<{ permalink?: string }>(await fetch(`${graph(env)}/${r.id}?${new URLSearchParams({ fields: "permalink", access_token: token })}`)).catch(() => ({ permalink: undefined }));
   return { mediaId: r.id, url: media.permalink ?? null };

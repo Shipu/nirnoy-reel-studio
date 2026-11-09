@@ -13,9 +13,9 @@ export const FACEBOOK_SCOPES = ["pages_show_list", "pages_read_engagement", "pag
 
 export type FacebookPage = { id: string; name: string; picture: string | null; token: string };
 
-export async function call<T>(res: Response): Promise<T> {
+export async function call<T>(res: Response, label = "Facebook"): Promise<T> {
   const data = (await res.json().catch(() => ({}))) as T & { error?: { message?: string; code?: number } };
-  if (!res.ok || data.error) throw new Error(`Facebook: ${data.error?.message ?? `HTTP ${res.status}`}`);
+  if (!res.ok || data.error) throw new Error(`${label}: ${data.error?.message ?? `HTTP ${res.status}`}`);
   return data;
 }
 

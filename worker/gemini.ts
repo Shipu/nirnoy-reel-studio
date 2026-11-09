@@ -65,6 +65,8 @@ type GeminiReply = { candidates?: { content?: { parts?: { text?: string }[] } }[
  * free key is skipped until its retry delay passes (per isolate; defaults to 5 minutes).
  */
 let freeBlockedUntil = 0;
+/** Per Gemini call; the free key timing out still leaves time for the paid one. */
+const TIMEOUT_MS = 45_000;
 const isQuota = (status: number, e?: GeminiReply["error"]) => status === 429 || e?.status === "RESOURCE_EXHAUSTED";
 const retryMs = (e?: GeminiReply["error"]) => {
   const d = e?.details?.find((x) => x.retryDelay)?.retryDelay;
@@ -100,27 +102,43 @@ export async function reviewExplanation(request: Request, env: Env): Promise<Res
   let data: GeminiReply = {};
   let tier: "free" | "paid" = "free";
   const usable = keys.filter((k) => !(k.tier === "free" && Date.now() < freeBlockedUntil && keys.length > 1));
-  for (const k of usable) {
+  let timedOut = false;
+  for (const [i, k] of usable.entries()) {
     tier = k.tier;
-    res = await fetch(`${base}/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-goog-api-key": k.key },
-      body: payload,
-    });
-    data = (await res.json().catch(() => ({}))) as GeminiReply;
-    if (k.tier === "free" && isQuota(res.status, data.error)) {
+    const started = Date.now();
+    try {
+      res = await fetch(`${base}/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-goog-api-key": k.key },
+        body: payload,
+        signal: AbortSignal.timeout(TIMEOUT_MS),
+      });
+      data = (await res.json().catch(() => ({}))) as GeminiReply;
+    } catch (e) {
+      // A hung call must not leave the button spinning: give up on this key and try the next one.
+      console.error(`gemini ${k.tier} ${model}: ${(e as Error).name} after ${Date.now() - started}ms`);
+      res = null;
+      timedOut = true;
+      continue;
+    }
+    console.log(`gemini ${k.tier} ${model}: HTTP ${res.status} in ${Date.now() - started}ms`);
+    if (k.tier === "free" && isQuota(res.status, data.error) && i < usable.length - 1) {
       freeBlockedUntil = Date.now() + retryMs(data.error);
       continue; // free limit reached → try the paid key
     }
     break;
   }
-  if (!res) return json({ message: "No Gemini key available." }, 500);
-  if (!res.ok) return json({ message: `Gemini (${tier}): ${data.error?.message ?? `HTTP ${res.status}`}` }, 502);
+  if (!res) return json({ message: timedOut ? `Gemini ${TIMEOUT_MS / 1000} সেকেন্ডে উত্তর দেয়নি — আবার চেষ্টা করুন।` : "No Gemini key available." }, timedOut ? 504 : 500);
+  if (!res.ok) {
+    console.error(`gemini ${tier} error`, JSON.stringify(data.error ?? {}));
+    return json({ message: `Gemini (${tier}): ${data.error?.message ?? `HTTP ${res.status}`}` }, 502);
+  }
   const text = data.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("") ?? "";
   try {
     const r = JSON.parse(text) as ExplanationReview;
     return json({ ...r, problems: Array.isArray(r.problems) ? r.problems : [], model, tier });
   } catch {
+    console.error(`gemini ${tier} unreadable reply`, JSON.stringify(data).slice(0, 2000));
     return json({ message: "Gemini থেকে বোঝার মতো উত্তর আসেনি — আবার চেষ্টা করুন।" }, 502);
   }
 }
