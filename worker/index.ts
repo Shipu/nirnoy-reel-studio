@@ -1,5 +1,6 @@
 import { createRemoteJWKSet, jwtVerify } from "jose";
 import { channelsApi, oauthCallback } from "./channels";
+import { reviewExplanation } from "./gemini";
 import { publishApi } from "./publish";
 
 export { PublishWorkflow } from "./publish";
@@ -19,6 +20,14 @@ export interface Env {
   R2_BUCKET_NAME?: string;
   R2_ACCESS_KEY_ID?: string;
   R2_SECRET_ACCESS_KEY?: string;
+  /**
+   * Google Gemini keys (secrets) and model for the explanation check: the free key is used first and
+   * the paid key once the free quota runs out. GEMINI_ENDPOINT is test-only.
+   */
+  GEMINI_API_KEY?: string;
+  GEMINI_API_KEY_PAID?: string;
+  GEMINI_MODEL?: string;
+  GEMINI_ENDPOINT?: string;
   /** 32 random bytes, base64: encrypts platform tokens at rest. */
   TOKEN_KEY?: string;
   /** Meta (Facebook / Instagram) app credentials, secrets. */
@@ -453,6 +462,7 @@ export default {
     if (/^\/api\/reels\/\d+\/publish\/?$/.test(url.pathname) || url.pathname.startsWith("/api/publishes")) return publishApi(request, env, url, user);
 
     if (request.method === "POST" && url.pathname === "/api/tts") return tts(request, env, ctx);
+    if (request.method === "POST" && url.pathname === "/api/ai/explanation") return reviewExplanation(request, env);
     if (request.method === "GET" && url.pathname === "/api/tts/voices") return json({ provider: "elevenlabs", voices: await voiceList(env) });
 
     if (request.method === "GET" && url.pathname === "/api/questions/random") {

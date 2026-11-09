@@ -180,3 +180,13 @@ a.btn.connect { background: var(--primary); color: #fff; padding: 9px 16px; font
 .swap-options { margin: 0; padding-left: 4px; list-style: none; font-size: 14px; display: flex; flex-direction: column; gap: 2px; }
 .swap-options li.correct { color: var(--success); font-weight: 600; }
 .chip.pub-scheduled_remote { background: #e0e7ff; color: #3730a3; }
+
+/* ---- AI explanation check ---- */
+.ai-review { display: flex; flex-direction: column; gap: 8px; padding: 12px; border-radius: 10px; border: 1px solid var(--line); background: #fff; }
+.ai-review.v-ok { border-color: #86efac; background: #f0fdf4; }
+.ai-review.v-wrong { border-color: #fca5a5; background: #fef2f2; }
+.ai-review.v-incomplete { border-color: #fcd34d; background: #fffbeb; }
+.ai-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.ai-warn { margin: 0; padding: 8px 10px; border-radius: 8px; background: #fee2e2; color: var(--danger); font-size: 14px; }
+.ai-problems { margin: 0; padding-left: 18px; font-size: 14px; color: var(--ink); }
+.ai-text { margin: 0; padding: 8px 10px; border-radius: 8px; background: #fff; border: 1px solid var(--line); line-height: 1.6; font-size: 14px; }

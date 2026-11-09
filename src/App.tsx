@@ -8,6 +8,9 @@ import {
   type ApiQuestion,
   diffQuestion,
   citationsOf,
+  type ExplanationReview,
+  reviewExplanation,
+  speakable,
   fetchQuestion,
   fetchRandom,
   fetchVoices,
@@ -338,6 +341,34 @@ export function Editor({ reelId }: { reelId: number }) {
     }
   };
 
+  // ---- Explanation check with Gemini ----
+  const [review, setReview] = useState<ExplanationReview | null>(null);
+  const [reviewing, setReviewing] = useState(false);
+  const runReview = async () => {
+    if (!props) return;
+    setReviewing(true);
+    setReview(null);
+    try {
+      setReview(await reviewExplanation(props, original ? citationsOf(original) : [props.act, props.source].filter(Boolean)));
+    } catch (e) {
+      setStatus({ kind: "error", text: (e as Error).message });
+    } finally {
+      setReviewing(false);
+    }
+  };
+  /** Uses a suggested explanation; the narration line follows, and an old explanation voice is flagged. */
+  const applyExplanation = (text: string) => {
+    set("explanation", text);
+    setScripts((sc) => (sc ? { ...sc, explanation: speakable(text) } : sc));
+    setReview(null);
+    setStatus({
+      kind: "ok",
+      text: props?.voice.explanation
+        ? "নতুন ব্যাখ্যা বসানো হয়েছে। ব্যাখ্যার voice পুরনো লেখার — অডিও অংশে আবার বানান বা রেকর্ড করুন। ডাটাবেসে রাখতে চাইলে \"ডাটাবেসে সেভ করুন\"।"
+        : "নতুন ব্যাখ্যা বসানো হয়েছে। ডাটাবেসে রাখতে চাইলে \"ডাটাবেসে সেভ করুন\"।",
+    });
+  };
+
   const generated = useMemo(() => (props ? generateCaptions(props) : null), [props]);
   const copyCaption = async (platform: Platform) => {
     if (!generated) return;
@@ -459,6 +490,43 @@ export function Editor({ reelId }: { reelId: number }) {
                   ব্যাখ্যা <small>{props.explanation.length} অক্ষর{props.explanation.length > 450 ? " · লম্বা, ছোট করলে ভালো" : ""}</small>
                   <textarea rows={6} value={props.explanation} onChange={(e) => set("explanation", e.target.value)} />
                 </label>
+                <div className="row small">
+                  <button className="secondary" disabled={reviewing} onClick={runReview} title="Gemini দিয়ে ব্যাখ্যা ও উত্তর যাচাই, ঠিক করা ও ছোট ব্যাখ্যা">
+                    {reviewing ? "যাচাই করছি…" : "✨ AI দিয়ে যাচাই"}
+                  </button>
+                </div>
+                {review ? (
+                  <div className={`ai-review v-${review.verdict}`}>
+                    <div className="ai-head">
+                      <strong>{review.verdict === "ok" ? "✓ ব্যাখ্যা ঠিক আছে" : review.verdict === "wrong" ? "✕ ব্যাখ্যায় ভুল আছে" : "! ব্যাখ্যা অসম্পূর্ণ"}</strong>
+                      <small className="muted">
+                        {review.model} · {review.tier === "paid" ? "paid key" : "free key"}
+                      </small>
+                    </div>
+                    {!review.answer_ok ? <p className="ai-warn">⚠ চিহ্নিত সঠিক উত্তর নিয়ে সন্দেহ: {review.answer_note || "উত্তরটি আবার দেখুন।"}</p> : null}
+                    {review.problems.length ? (
+                      <ul className="ai-problems">
+                        {review.problems.map((x, i) => (
+                          <li key={i}>{x}</li>
+                        ))}
+                      </ul>
+                    ) : null}
+                    <div className="field-title">{review.verdict === "ok" ? "একটু পরিষ্কার করা ব্যাখ্যা" : "ঠিক করা ব্যাখ্যা"} <small>{review.explanation.length} অক্ষর</small></div>
+                    <p className="ai-text">{review.explanation}</p>
+                    <div className="field-title">ছোট ব্যাখ্যা <small>{review.short.length} অক্ষর</small></div>
+                    <p className="ai-text">{review.short}</p>
+                    <div className="row small">
+                      <button onClick={() => applyExplanation(review.explanation)}>এটা বসান</button>
+                      <button className="secondary" onClick={() => applyExplanation(review.short)}>
+                        ছোটটা বসান
+                      </button>
+                      <button className="link" onClick={() => setReview(null)}>
+                        বন্ধ
+                      </button>
+                    </div>
+                    <p className="muted">AI ভুল করতে পারে — বসানোর আগে আইনের ধারা মিলিয়ে নিন।</p>
+                  </div>
+                ) : null}
                 <div className="row save-row">
                   <button className="secondary" disabled={busy || !edit} onClick={saveEdits}>
                     ডাটাবেসে সেভ করুন

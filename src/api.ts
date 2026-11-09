@@ -114,7 +114,7 @@ export function diffQuestion(original: ApiQuestion, p: ReelProps): QuestionEdit 
 }
 
 /** Turns on-screen text into speakable text: blanks become a pause. */
-const speakable = (text: string) =>
+export const speakable = (text: string) =>
   text
     .replace(/_{2,}|…{2,}|\.{4,}/g, " … ")
     .replace(/\s+/g, " ")
@@ -141,6 +141,26 @@ export function narrationScripts(p: ReelProps): Record<SegmentKey, string> {
     cta: DEFAULT_CTA_TEXT,
   };
 }
+
+export type ExplanationReview = {
+  verdict: "ok" | "wrong" | "incomplete";
+  answer_ok: boolean;
+  answer_note: string;
+  problems: string[];
+  explanation: string;
+  short: string;
+  model: string;
+  /** Which Gemini key answered: the free one, or the paid one after the free quota ran out. */
+  tier: "free" | "paid";
+};
+
+/** Asks Gemini (through the Worker) to check the explanation and suggest a corrected and a short one. */
+export const reviewExplanation = (p: ReelProps, citations: string[]) =>
+  request<ExplanationReview>("/api/ai/explanation", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ body: p.body, options: p.options, correctIndex: p.correctIndex, explanation: p.explanation, citations }),
+  });
 
 export type TtsVoice = { id: string; label: string };
 
