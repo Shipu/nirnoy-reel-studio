@@ -152,6 +152,21 @@ export function PublishDialog({ reelId, props, captions, onClose }: { reelId: nu
                         আবার চেষ্টা
                       </button>
                     ) : null}
+                    {(r.status === "published" || r.status === "canceled") && r.channel_name ? (
+                      <button
+                        className="secondary"
+                        title="একই caption দিয়ে এই channel-এ নতুন করে post (যেমন post মুছে ফেললে)"
+                        onClick={() => {
+                          if (!window.confirm(`"${r.channel_name}"-এ এই reel আবার post করবেন? আগের post থাকলে দুটো হয়ে যাবে।`)) return;
+                          void act(async () => {
+                            await publishReel(reelId, [{ channel_id: r.channel_id, caption: r.caption }], null, Math.round(coverMoment(props) * 1000));
+                            setMsg({ kind: "ok", text: "আবার পাঠানো হচ্ছে — কয়েক মিনিটে প্রকাশ হবে।" });
+                          });
+                        }}
+                      >
+                        আবার post
+                      </button>
+                    ) : null}
                     {r.status === "scheduled" || r.status === "scheduled_remote" ? (
                       <button className="link danger" onClick={() => act(() => cancelPublish(r.id))}>
                         বাতিল

@@ -14,8 +14,19 @@ export const FACEBOOK_SCOPES = ["pages_show_list", "pages_read_engagement", "pag
 export type FacebookPage = { id: string; name: string; picture: string | null; token: string };
 
 export async function call<T>(res: Response, label = "Facebook"): Promise<T> {
-  const data = (await res.json().catch(() => ({}))) as T & { error?: { message?: string; code?: number } };
-  if (!res.ok || data.error) throw new Error(`${label}: ${data.error?.message ?? `HTTP ${res.status}`}`);
+  const raw = await res.text().catch(() => "");
+  let data = {} as T & { error?: { message?: string; error_user_msg?: string; code?: number }; debug_info?: { message?: string; type?: string } };
+  try {
+    data = JSON.parse(raw);
+  } catch {
+    // not JSON: keep the raw text for the error
+  }
+  if (!res.ok || data.error) {
+    // Graph errors use `error`; the rupload (video upload) host uses `debug_info`.
+    const why = data.error?.error_user_msg || data.error?.message || data.debug_info?.message || raw.slice(0, 300) || "";
+    console.error(`${label} HTTP ${res.status}: ${raw.slice(0, 1000)}`);
+    throw new Error(`${label}: ${why ? `${why} (HTTP ${res.status})` : `HTTP ${res.status}`}`);
+  }
   return data;
 }
 
