@@ -174,9 +174,10 @@ export class PublishWorkflow extends WorkflowEntrypoint<Env, Params> {
   /** Instagram Reel: container + resumable upload, wait FINISHED, then media_publish. Returns the link. */
   private async instagram(row: PublishRow, step: WorkflowStep): Promise<string | null> {
     const id = row.id;
-    // Container + upload: retry-safe on its own (an unpublished container is never posted), but kept
-    // at one attempt so a failure is visible; you retry from the studio.
-    const containerId = await step.do("upload to Instagram", { retries: { limit: 0, delay: "1 second" }, timeout: "10 minutes" }, async () => {
+    // Container + upload. Meta's upload host sometimes answers "Request processing failed" (HTTP 400)
+    // and the same video goes through on the next try, so this step retries with a fresh container each
+    // time. Safe: an unpublished container is never posted, and publishing below is never retried.
+    const containerId = await step.do("upload to Instagram", { retries: { limit: 3, delay: "30 seconds", backoff: "exponential" }, timeout: "10 minutes" }, async () => {
       const ch = await channelToken(this.env, row.channel_id);
       const video = await this.env.MEDIA.get(`reels/${row.reel_id}/video.mp4`);
       if (!video) throw new Error("Reel has no rendered video — render it first.");
@@ -184,7 +185,14 @@ export class PublishWorkflow extends WorkflowEntrypoint<Env, Params> {
         url: await this.coverUrl(row.reel_id),
         offsetMs: row.cover_offset_ms,
       });
-      await instagramUpload(c.uri, ch.token, await video.arrayBuffer());
+      try {
+        await instagramUpload(c.uri, ch.token, await video.arrayBuffer());
+      } catch (e) {
+        // The upload host only says "Request processing failed"; the container's status has Meta's reason.
+        const why = await instagramContainerStatus(this.env, c.id, ch.token).catch(() => null);
+        console.error(`instagram upload failed for container ${c.id}`, JSON.stringify(why));
+        throw new Error(why?.state === "error" ? `${(e as Error).message} — ${why.error}` : (e as Error).message);
+      }
       await setStatus(this.env, id, { remote_id: c.id });
       return c.id;
     });

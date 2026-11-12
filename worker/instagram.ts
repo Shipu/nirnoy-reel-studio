@@ -33,7 +33,9 @@ export async function instagramContainer(env: Env, igUserId: string, token: stri
     // An exact cover image (presigned R2 link to the studio thumbnail) wins; else a video moment.
     if (useCover && cover.url) body.set("cover_url", cover.url);
     else if (cover.offsetMs != null) body.set("thumb_offset", String(cover.offsetMs));
-    return call<{ id: string; uri?: string }>(await fetch(`${graph(env)}/${igUserId}/media`, { method: "POST", body }), "Instagram");
+    const r = await call<{ id: string; uri?: string }>(await fetch(`${graph(env)}/${igUserId}/media`, { method: "POST", body }), "Instagram");
+    console.log(`instagram container created ${r.id} uri=${r.uri ?? "(none)"} cover=${useCover && cover.url ? "url" : cover.offsetMs != null ? `offset ${cover.offsetMs}` : "none"}`);
+    return r;
   };
   let r: { id: string; uri?: string };
   try {
@@ -66,6 +68,7 @@ export async function instagramContainerStatus(env: Env, containerId: string, to
     await fetch(`${graph(env)}/${containerId}?${new URLSearchParams({ fields: "status_code,status", access_token: token })}`),
     "Instagram",
   );
+  console.log(`instagram container ${containerId}: ${r.status_code} ${r.status ?? ""}`);
   if (r.status_code === "FINISHED") return { state: "ready" as const };
   if (r.status_code === "ERROR" || r.status_code === "EXPIRED") return { state: "error" as const, error: `Instagram: ${r.status ?? r.status_code}` };
   return { state: "working" as const };
