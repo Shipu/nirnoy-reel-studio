@@ -188,10 +188,12 @@ export class PublishWorkflow extends WorkflowEntrypoint<Env, Params> {
       try {
         await instagramUpload(c.uri, ch.token, await video.arrayBuffer());
       } catch (e) {
-        // The upload host only says "Request processing failed"; the container's status has Meta's reason.
+        // The upload host can answer "Request processing failed" (HTTP 400) even though it received the
+        // video and the container is processing it. The container's status decides: still processing or
+        // done → carry on (the checks below wait for it); error → fail with Meta's reason.
         const why = await instagramContainerStatus(this.env, c.id, ch.token).catch(() => null);
-        console.error(`instagram upload failed for container ${c.id}`, JSON.stringify(why));
-        throw new Error(why?.state === "error" ? `${(e as Error).message} — ${why.error}` : (e as Error).message);
+        console.error(`instagram upload answered an error for container ${c.id}; container is`, JSON.stringify(why));
+        if (why?.state !== "working" && why?.state !== "ready") throw new Error(why?.state === "error" ? `${(e as Error).message} — ${why.error}` : (e as Error).message);
       }
       await setStatus(this.env, id, { remote_id: c.id });
       return c.id;
