@@ -23,6 +23,7 @@ export function PublishDialog({ reelId, props, captions, onClose }: { reelId: nu
   const [rows, setRows] = useState<Publish[]>([]);
   const [chosen, setChosen] = useState<Set<number>>(new Set());
   const [text, setText] = useState<Record<number, string>>({});
+  const [titles, setTitles] = useState<Record<number, string>>({});
   const [when, setWhen] = useState<"now" | "at">("now");
   const [at, setAt] = useState("");
   const [msg, setMsg] = useState<{ kind: "ok" | "error" | "busy"; text: string } | null>(null);
@@ -39,9 +40,11 @@ export function PublishDialog({ reelId, props, captions, onClose }: { reelId: nu
   }, [reelId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const captionFor = (c: Channel) => text[c.id] ?? ready[c.platform];
+  const titleFor = (c: Channel) => (c.platform === "youtube" ? (titles[c.id] ?? ready.youtubeTitle) : null);
 
   // Facebook keeps scheduled Reels itself, but only 10 minutes to 29 days ahead.
   const fbChosen = (channels ?? []).some((c) => chosen.has(c.id) && c.platform === "facebook");
+  const ytChosen = (channels ?? []).some((c) => chosen.has(c.id) && c.platform === "youtube");
   const ahead = when === "at" && at ? new Date(dhakaToIso(at)).getTime() - Date.now() : null;
   const fbWindowError = fbChosen && ahead !== null && (ahead < 10 * 60_000 || ahead > 29 * 24 * 3600_000);
 
@@ -51,7 +54,7 @@ export function PublishDialog({ reelId, props, captions, onClose }: { reelId: nu
     if (fbWindowError) return setMsg({ kind: "error", text: "Facebook-এ schedule করতে সময়টা এখন থেকে অন্তত ১০ মিনিট পরে এবং ২৯ দিনের মধ্যে হতে হবে।" });
     setMsg({ kind: "busy", text: "পাঠাচ্ছি…" });
     try {
-      const targets = channels.filter((c) => chosen.has(c.id)).map((c) => ({ channel_id: c.id, caption: captionFor(c) }));
+      const targets = channels.filter((c) => chosen.has(c.id)).map((c) => ({ channel_id: c.id, caption: captionFor(c), title: titleFor(c) }));
       const r = await publishReel(reelId, targets, when === "at" ? dhakaToIso(at) : null, Math.round(coverMoment(props) * 1000));
       setMsg({ kind: "ok", text: when === "at" ? `${r.created.length}টি post নির্ধারিত হয়েছে (${at.replace("T", " ")})।` : `${r.created.length}টি post যাচ্ছে — কয়েক মিনিটে প্রকাশ হবে।` });
       setChosen(new Set());
@@ -98,6 +101,15 @@ export function PublishDialog({ reelId, props, captions, onClose }: { reelId: nu
                   {c.picture ? <img className="mini-avatar" src={c.picture} alt="" /> : null}
                   <strong>{c.name}</strong> <small className="muted">{PLATFORM_LABEL[c.platform]}</small>
                 </label>
+                {chosen.has(c.id) && c.platform === "youtube" ? (
+                  <input
+                    value={titleFor(c) ?? ""}
+                    maxLength={100}
+                    placeholder="YouTube title"
+                    title="YouTube title (সর্বোচ্চ ১০০ অক্ষর)"
+                    onChange={(e) => setTitles({ ...titles, [c.id]: e.target.value })}
+                  />
+                ) : null}
                 {chosen.has(c.id) ? <textarea rows={6} value={captionFor(c)} onChange={(e) => setText({ ...text, [c.id]: e.target.value })} /> : null}
               </div>
             ))}
@@ -117,6 +129,9 @@ export function PublishDialog({ reelId, props, captions, onClose }: { reelId: nu
           <p className={`muted ${fbWindowError ? "over" : ""}`}>
             Facebook-এ এখনই upload হয়ে Meta Business Suite-এর Scheduled-এ থাকবে, Facebook নিজেই সময়মতো প্রকাশ করবে (১০ মিনিট থেকে ২৯ দিনের মধ্যে)। Instagram studio থেকে সময়মতো যাবে।
           </p>
+        ) : null}
+        {when === "at" && ytChosen ? (
+          <p className="muted">YouTube-এ এখনই private হিসেবে upload হবে, YouTube নিজেই নির্ধারিত সময়ে public করবে (YouTube Studio-তে দেখা যাবে)।</p>
         ) : null}
 
         {msg ? <p className={`status ${msg.kind}`}>{msg.text}</p> : null}
@@ -159,7 +174,7 @@ export function PublishDialog({ reelId, props, captions, onClose }: { reelId: nu
                         onClick={() => {
                           if (!window.confirm(`"${r.channel_name}"-এ এই reel আবার post করবেন? আগের post থাকলে দুটো হয়ে যাবে।`)) return;
                           void act(async () => {
-                            await publishReel(reelId, [{ channel_id: r.channel_id, caption: r.caption }], null, Math.round(coverMoment(props) * 1000));
+                            await publishReel(reelId, [{ channel_id: r.channel_id, caption: r.caption, title: r.title }], null, Math.round(coverMoment(props) * 1000));
                             setMsg({ kind: "ok", text: "আবার পাঠানো হচ্ছে — কয়েক মিনিটে প্রকাশ হবে।" });
                           });
                         }}

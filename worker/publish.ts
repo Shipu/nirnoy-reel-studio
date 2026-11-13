@@ -2,6 +2,7 @@ import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloud
 import { channelToken } from "./channels";
 import { FB_SCHEDULE_MAX_MS, FB_SCHEDULE_MIN_MS, facebookDeleteVideo, facebookReelFinish, facebookReelStart, facebookReelStatus, facebookReelUpload, facebookThumbnail } from "./facebook";
 import { instagramContainer, instagramContainerStatus, instagramPublish, instagramUpload } from "./instagram";
+import { youtubeAccessToken, youtubeDelete, youtubeThumbnail, youtubeUpload, youtubeUrl, youtubeVideoStatus } from "./youtube";
 import { presignGet } from "./presign";
 import type { Env } from "./index";
 
@@ -24,6 +25,8 @@ type PublishRow = {
   channel_id: number;
   platform: string;
   caption: string;
+  /** YouTube title. */
+  title: string | null;
   scheduled_at: string | null;
   status: string;
   remote_id: string | null;
@@ -31,7 +34,7 @@ type PublishRow = {
 };
 
 const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json", "cache-control": "no-store" } });
-const COLUMNS = "p.id, p.reel_id, p.channel_id, p.platform, p.caption, p.scheduled_at, p.status, p.remote_id, p.url, p.error, p.created_by, p.created_at, p.updated_at, c.name AS channel_name, c.picture AS channel_picture";
+const COLUMNS = "p.id, p.reel_id, p.channel_id, p.platform, p.caption, p.title, p.scheduled_at, p.status, p.remote_id, p.url, p.error, p.created_by, p.created_at, p.updated_at, c.name AS channel_name, c.picture AS channel_picture";
 
 const setStatus = (env: Env, id: number, fields: Record<string, string | null>) => {
   const keys = Object.keys(fields);
@@ -49,8 +52,8 @@ export class PublishWorkflow extends WorkflowEntrypoint<Env, Params> {
       return r;
     });
     const at = row.scheduled_at ? Date.parse(`${row.scheduled_at.replace(" ", "T")}Z`) : 0;
-    // Facebook keeps scheduled Reels itself, so those are uploaded right away; others wait here.
-    const nativeSchedule = row.platform === "facebook" && at > Date.now();
+    // Facebook and YouTube keep scheduled posts themselves, so those are uploaded right away; others wait here.
+    const nativeSchedule = (row.platform === "facebook" || row.platform === "youtube") && at > Date.now();
     if (at > Date.now() && !nativeSchedule) await step.sleepUntil("wait for the scheduled time", new Date(at));
     // Canceled (or channel removed) while waiting.
     const current = await step.do("check still wanted", async () => {
@@ -72,11 +75,18 @@ export class PublishWorkflow extends WorkflowEntrypoint<Env, Params> {
         url = r.url;
       }
       else if (row.platform === "instagram") url = await this.instagram(row, step);
+      else if (row.platform === "youtube") {
+        const r = await this.youtube(row, step, nativeSchedule ? new Date(at).toISOString() : undefined);
+        if (r.canceled) return { skipped: "canceled" };
+        url = r.url;
+      }
       else throw new Error(`No connector for ${row.platform} yet.`);
 
       await step.do("mark published", async () => {
         await setStatus(this.env, id, { status: "published", url, error: null });
         await this.env.DB.prepare("UPDATE reels SET status = 'published', updated_at = datetime('now') WHERE id = ?").bind(row.reel_id).run();
+        // The reel list shows the YouTube link (the same field as "YouTube-এ দিয়েছি").
+        if (row.platform === "youtube" && url) await this.env.DB.prepare("UPDATE reels SET youtube_url = ? WHERE id = ?").bind(url, row.reel_id).run();
         return true;
       });
       return { published: url };
@@ -220,6 +230,70 @@ export class PublishWorkflow extends WorkflowEntrypoint<Env, Params> {
     });
     return published.url;
   }
+
+  /**
+   * YouTube Short: upload (private + publishAt when scheduled, else public), set the thumbnail, wait
+   * for processing. Scheduled ones then wait for their time and confirm YouTube made them public.
+   */
+  private async youtube(row: PublishRow, step: WorkflowStep, publishAt?: string): Promise<{ url: string | null; canceled?: boolean }> {
+    // One attempt only: a retry after a finished upload would post the video twice.
+    const videoId = await step.do("upload to YouTube", { retries: { limit: 0, delay: "1 second" }, timeout: "15 minutes" }, async () => {
+      const ch = await channelToken(this.env, row.channel_id);
+      const video = await this.env.MEDIA.get(`reels/${row.reel_id}/video.mp4`);
+      if (!video) throw new Error("Reel has no rendered video — render it first.");
+      const token = await youtubeAccessToken(this.env, ch.token);
+      const firstLine = row.caption.split("\n")[0] ?? "";
+      const vid = await youtubeUpload(this.env, token, await video.arrayBuffer(), { title: row.title || firstLine, description: row.caption, publishAt });
+      await setStatus(this.env, row.id, { remote_id: vid, url: youtubeUrl(vid) });
+      const thumb = await this.env.MEDIA.get(`reels/${row.reel_id}/thumb.jpg`);
+      if (thumb) await youtubeThumbnail(this.env, token, vid, await thumb.arrayBuffer());
+      return vid;
+    });
+    const url = youtubeUrl(videoId);
+
+    // Check every 20 s for up to ~20 minutes until it is processed.
+    let privacy = "";
+    for (let i = 0; i < 60; i++) {
+      const s = await step.do(`check processing ${i}`, { retries: { limit: 3, delay: "10 seconds" } }, async () => {
+        const ch = await channelToken(this.env, row.channel_id);
+        return youtubeVideoStatus(this.env, await youtubeAccessToken(this.env, ch.token), videoId);
+      });
+      if (s.state === "error") throw new Error(s.error);
+      if (s.state === "gone") throw new Error("YouTube: the video was removed.");
+      if (s.state === "processed") {
+        privacy = s.privacy;
+        break;
+      }
+      if (i === 59) throw new Error("YouTube is still processing after 20 minutes — check YouTube Studio; it may appear later.");
+      await step.sleep(`wait ${i}`, "20 seconds");
+    }
+
+    // Videos uploaded through an API project that has not passed YouTube's audit are locked private.
+    const lockedNote = "YouTube video-টি private রেখেছে — Google Cloud project-এর YouTube API audit না হওয়া পর্যন্ত API দিয়ে তোলা video private থাকে। YouTube Studio থেকে public করুন।";
+    if (!publishAt) {
+      if (privacy && privacy !== "public") await step.do("note private", async () => (await setStatus(this.env, row.id, { error: lockedNote }), true));
+      return { url };
+    }
+
+    await step.do("mark scheduled on YouTube", async () => {
+      await setStatus(this.env, row.id, { status: "scheduled_remote", url, error: null });
+      return true;
+    });
+    await step.sleepUntil("wait until YouTube publishes it", new Date(Date.parse(publishAt) + 120_000));
+    const still = await step.do("check not canceled", async () => {
+      const r = await this.env.DB.prepare("SELECT status FROM publishes WHERE id = ?").bind(row.id).first<{ status: string }>();
+      return r?.status ?? "canceled";
+    });
+    if (still !== "scheduled_remote") return { url, canceled: true };
+    const s = await step.do("check published", { retries: { limit: 3, delay: "30 seconds" } }, async () => {
+      const ch = await channelToken(this.env, row.channel_id);
+      return youtubeVideoStatus(this.env, await youtubeAccessToken(this.env, ch.token), videoId);
+    });
+    if (s.state === "gone") throw new Error("YouTube: the scheduled video was removed.");
+    if (s.state === "error") throw new Error(s.error);
+    if (s.privacy !== "public") await step.do("note private", async () => (await setStatus(this.env, row.id, { error: lockedNote }), true));
+    return { url };
+  }
 }
 
 async function start(env: Env, id: number) {
@@ -233,7 +307,7 @@ export async function publishApi(request: Request, env: Env, url: URL, user: str
   if (reel && request.method === "POST") {
     const reelId = Number(reel[1]);
     const body = (await request.json().catch(() => null)) as {
-      targets?: { channel_id?: unknown; caption?: unknown }[];
+      targets?: { channel_id?: unknown; caption?: unknown; title?: unknown }[];
       scheduled_at?: unknown;
       cover_offset_ms?: unknown;
     } | null;
@@ -260,9 +334,9 @@ export async function publishApi(request: Request, env: Env, url: URL, user: str
     }
     for (const { t, ch } of chans) {
       const row = await env.DB.prepare(
-        "INSERT INTO publishes (reel_id, channel_id, platform, caption, scheduled_at, cover_offset_ms, created_by) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id",
+        "INSERT INTO publishes (reel_id, channel_id, platform, caption, title, scheduled_at, cover_offset_ms, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
       )
-        .bind(reelId, ch.id, ch.platform, String(t.caption), scheduled, coverMs, user)
+        .bind(reelId, ch.id, ch.platform, String(t.caption), typeof t.title === "string" && t.title.trim() ? t.title.trim().slice(0, 200) : null, scheduled, coverMs, user)
         .first<{ id: number }>();
       if (row) {
         await start(env, row.id);
@@ -293,13 +367,15 @@ export async function publishApi(request: Request, env: Env, url: URL, user: str
     }
     if (!one[2] && request.method === "DELETE") {
       if (row.status !== "scheduled" && row.status !== "scheduled_remote") return json({ message: "শুধু নির্ধারিত (এখনো যায়নি এমন) post বাতিল করা যায়।" }, 422);
-      // Scheduled on Facebook: remove the waiting video there too.
+      // Scheduled on Facebook / YouTube: remove the waiting video there too.
       if (row.status === "scheduled_remote" && row.remote_id) {
+        const where = row.platform === "youtube" ? "YouTube" : "Facebook";
         try {
           const ch = await channelToken(env, row.channel_id);
-          await facebookDeleteVideo(env, row.remote_id, ch.token);
+          if (row.platform === "youtube") await youtubeDelete(env, await youtubeAccessToken(env, ch.token), row.remote_id);
+          else await facebookDeleteVideo(env, row.remote_id, ch.token);
         } catch (e) {
-          return json({ message: `Facebook থেকে মোছা গেল না: ${(e as Error).message}` }, 502);
+          return json({ message: `${where} থেকে মোছা গেল না: ${(e as Error).message}` }, 502);
         }
       }
       await setStatus(env, id, { status: "canceled" });

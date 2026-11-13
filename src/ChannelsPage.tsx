@@ -78,7 +78,7 @@ export function ChannelsPage() {
             </a>
           ))}
         </div>
-        <p className="muted">Login শেষে আপনার সব Page (বা Page-এর সাথে যুক্ত Instagram professional account) দেখাবে — কোনগুলো রাখবেন টিক দিয়ে বাছবেন। LinkedIn, TikTok, X পরে আসছে।</p>
+        <p className="muted">Login শেষে আপনার সব Page (বা Page-এর সাথে যুক্ত Instagram professional account, বা YouTube channel) দেখাবে — কোনগুলো রাখবেন টিক দিয়ে বাছবেন। YouTube-এ Google login-এর সময় যে channel বাছবেন সেটাই আসবে। LinkedIn, TikTok, X পরে আসছে।</p>
       </section>
 
       {status.text ? <p className={`status ${status.kind}`}>{status.text}</p> : null}
@@ -112,12 +112,14 @@ export function ChannelsPage() {
       {pick ? (
         <div className="dialog-backdrop" onClick={() => setPick(null)}>
           <div className="dialog" onClick={(e) => e.stopPropagation()}>
-            <h2>{pick.platform === "instagram" ? "কোন Instagram account রাখবেন?" : "কোন Page গুলো রাখবেন?"}</h2>
+            <h2>{pick.platform === "instagram" ? "কোন Instagram account রাখবেন?" : pick.platform === "youtube" ? "কোন YouTube channel রাখবেন?" : "কোন Page গুলো রাখবেন?"}</h2>
             {pick.accounts.length === 0 ? (
               <p className="muted">
                 {pick.platform === "instagram"
                   ? "কোনো Instagram account পাওয়া যায়নি। Instagram account-টি professional (Business/Creator) হতে হবে এবং একটি Facebook Page-এর সাথে যুক্ত থাকতে হবে; login-এর সময় সেই Page ও account বাছতে হবে।"
-                  : "এই account-এ কোনো Page পাওয়া যায়নি (বা অনুমতি দেওয়া হয়নি)।"}
+                  : pick.platform === "youtube"
+                    ? "এই Google account-এ কোনো YouTube channel পাওয়া যায়নি। Login-এর সময় যে channel-এ post করবেন সেটা (Brand account হলে সেটাই) বাছুন।"
+                    : "এই account-এ কোনো Page পাওয়া যায়নি (বা অনুমতি দেওয়া হয়নি)।"}
               </p>
             ) : null}
             <ul className="dialog-list">

@@ -38,6 +38,13 @@ export interface Env {
   META_GRAPH_BASE?: string;
   META_RUPLOAD_BASE?: string;
   META_DIALOG_BASE?: string;
+  /** Google OAuth client (secrets) for the YouTube connector. */
+  GOOGLE_CLIENT_ID?: string;
+  GOOGLE_CLIENT_SECRET?: string;
+  /** Test-only overrides of the Google / YouTube endpoints. */
+  GOOGLE_AUTH_BASE?: string;
+  GOOGLE_TOKEN_URL?: string;
+  YOUTUBE_API_BASE?: string;
   NIRNOY_API_BASE: string;
   REEL_API_KEY: string;
   ACCESS_TEAM_DOMAIN?: string;

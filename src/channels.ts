@@ -2,7 +2,7 @@
 
 export type Channel = {
   id: number;
-  platform: "facebook" | "instagram";
+  platform: "facebook" | "instagram" | "youtube";
   account_id: string;
   name: string;
   picture: string | null;
@@ -19,6 +19,7 @@ export type Publish = {
   channel_id: number;
   platform: Channel["platform"];
   caption: string;
+  title: string | null;
   scheduled_at: string | null;
   status: PublishStatus;
   url: string | null;
@@ -36,10 +37,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 const post = (body: unknown) => ({ method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
 
-export const PLATFORM_LABEL: Record<Channel["platform"], string> = { facebook: "Facebook Page", instagram: "Instagram" };
+export const PLATFORM_LABEL: Record<Channel["platform"], string> = { facebook: "Facebook Page", instagram: "Instagram", youtube: "YouTube" };
 export const PUBLISH_LABEL: Record<PublishStatus, string> = {
   scheduled: "নির্ধারিত",
-  scheduled_remote: "নির্ধারিত (Facebook-এ)",
+  scheduled_remote: "নির্ধারিত (platform-এ)",
   publishing: "যাচ্ছে…",
   published: "প্রকাশিত",
   failed: "ব্যর্থ",
@@ -53,7 +54,7 @@ export const addAccounts = (state: string, ids: string[]) =>
   request<{ added: number }>(`/api/channels/pending/${encodeURIComponent(state)}`, post({ account_ids: ids }));
 export const removeChannel = (id: number) => request(`/api/channels/${id}`, { method: "DELETE" });
 
-export const publishReel = (reelId: number, targets: { channel_id: number; caption: string }[], scheduledAt: string | null, coverOffsetMs?: number) =>
+export const publishReel = (reelId: number, targets: { channel_id: number; caption: string; title?: string | null }[], scheduledAt: string | null, coverOffsetMs?: number) =>
   request<{ created: number[] }>(`/api/reels/${reelId}/publish`, post({ targets, scheduled_at: scheduledAt, cover_offset_ms: coverOffsetMs }));
 export const listPublishes = (reelId?: number) => request<{ data: Publish[] }>(`/api/publishes${reelId ? `?reel_id=${reelId}` : ""}`).then((r) => r.data);
 export const retryPublish = (id: number) => request(`/api/publishes/${id}/retry`, { method: "POST" });

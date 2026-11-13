@@ -2,9 +2,10 @@ import { decrypt, encrypt, randomToken } from "./crypto";
 import { FACEBOOK_SCOPES, type FacebookPage, facebookAuthUrl, facebookPages, metaUserToken } from "./facebook";
 import { INSTAGRAM_SCOPES, instagramAccounts } from "./instagram";
 import type { Env } from "./index";
+import { youtubeAuthUrl, youtubeChannels } from "./youtube";
 
 /**
- * Channels: connect a platform (OAuth), tick which accounts to add, list / remove them.
+ * Channels: connect a platform (OAuth: Meta for Facebook/Instagram, Google for YouTube), tick which accounts to add, list / remove them.
  *   GET  /api/channels                       list (never returns tokens)
  *   GET  /api/channels/:platform/connect     → platform login
  *   GET  /oauth/callback/:platform           ← platform login, then /channels?pick=<state>
@@ -13,7 +14,7 @@ import type { Env } from "./index";
  *   DELETE /api/channels/:id
  */
 
-export const PLATFORMS = ["facebook", "instagram"] as const;
+export const PLATFORMS = ["facebook", "instagram", "youtube"] as const;
 type Platform = (typeof PLATFORMS)[number];
 
 const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json", "cache-control": "no-store" } });
@@ -23,8 +24,12 @@ const json = (data: unknown, status = 200) => new Response(JSON.stringify(data),
  */
 const callbackPath = (platform: string) => (platform === "instagram" ? "facebook" : platform);
 const callbackUrl = (url: URL, platform: string) => `${url.origin}/oauth/callback/${callbackPath(platform)}`;
-const META_SCOPES: Record<Platform, string[]> = { facebook: FACEBOOK_SCOPES, instagram: INSTAGRAM_SCOPES };
-async function metaAccounts(env: Env, platform: Platform, code: string, redirectUri: string): Promise<FacebookPage[]> {
+const META_SCOPES: Record<"facebook" | "instagram", string[]> = { facebook: FACEBOOK_SCOPES, instagram: INSTAGRAM_SCOPES };
+const authUrl = (env: Env, platform: Platform, redirectUri: string, state: string) =>
+  platform === "youtube" ? youtubeAuthUrl(env, redirectUri, state) : facebookAuthUrl(env, redirectUri, state, META_SCOPES[platform]);
+/** The accounts a login returned (Pages, Instagram accounts or YouTube channels), each with its token. */
+async function loginAccounts(env: Env, platform: Platform, code: string, redirectUri: string): Promise<FacebookPage[]> {
+  if (platform === "youtube") return youtubeChannels(env, code, redirectUri);
   const userToken = await metaUserToken(env, code, redirectUri);
   return platform === "instagram" ? instagramAccounts(env, userToken) : facebookPages(env, userToken);
 }
@@ -48,7 +53,7 @@ export async function channelsApi(request: Request, env: Env, url: URL, user: st
     await env.DB.prepare("DELETE FROM oauth_pending WHERE created_at < datetime('now', '-1 hour')").run();
     await env.DB.prepare("INSERT INTO oauth_pending (state, platform, created_by) VALUES (?, ?, ?)").bind(state, platform, user).run();
     try {
-      return Response.redirect(facebookAuthUrl(env, callbackUrl(url, platform), state, META_SCOPES[platform]), 302);
+      return Response.redirect(authUrl(env, platform, callbackUrl(url, platform), state), 302);
     } catch (e) {
       return json({ message: (e as Error).message }, 500);
     }
@@ -111,7 +116,7 @@ export async function oauthCallback(request: Request, env: Env, url: URL): Promi
   if (!code) return back(`error=${encodeURIComponent(url.searchParams.get("error_description") ?? url.searchParams.get("error") ?? "denied")}`);
 
   try {
-    const pages = await metaAccounts(env, platform, code, callbackUrl(url, platform));
+    const pages = await loginAccounts(env, platform, code, callbackUrl(url, platform));
     const accounts: PendingAccount[] = [];
     for (const p of pages) accounts.push({ id: p.id, name: p.name, picture: p.picture, token_enc: await encrypt(env.TOKEN_KEY, p.token) });
     await env.DB.prepare("UPDATE oauth_pending SET data = ? WHERE state = ?").bind(JSON.stringify(accounts), state).run();
