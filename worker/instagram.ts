@@ -23,18 +23,28 @@ export async function instagramAccounts(env: Env, userToken: string): Promise<Fa
 }
 
 /**
- * Creates a Reels container for a resumable upload; returns its id and the upload URL.
+ * Creates a Reels container — from a video link, or for a resumable upload; returns its id and the upload URL.
  * Instagram takes a cover image only by public URL, so the studio passes a short-lived presigned
  * R2 link to the thumbnail when R2 credentials are set, or else a video moment (thumb_offset).
  */
-export async function instagramContainer(env: Env, igUserId: string, token: string, caption: string, cover: { url?: string | null; offsetMs?: number | null }) {
+export async function instagramContainer(
+  env: Env,
+  igUserId: string,
+  token: string,
+  caption: string,
+  cover: { url?: string | null; offsetMs?: number | null },
+  videoUrl?: string | null,
+) {
   const create = async (useCover: boolean) => {
-    const body = new URLSearchParams({ media_type: "REELS", upload_type: "resumable", caption, share_to_feed: "true", access_token: token });
+    // With a video link Instagram fetches the file itself; otherwise the bytes are sent to the upload URL.
+    const body = new URLSearchParams({ media_type: "REELS", caption, share_to_feed: "true", access_token: token });
+    if (videoUrl) body.set("video_url", videoUrl);
+    else body.set("upload_type", "resumable");
     // An exact cover image (presigned R2 link to the studio thumbnail) wins; else a video moment.
     if (useCover && cover.url) body.set("cover_url", cover.url);
     else if (cover.offsetMs != null) body.set("thumb_offset", String(cover.offsetMs));
     const r = await call<{ id: string; uri?: string }>(await fetch(`${graph(env)}/${igUserId}/media`, { method: "POST", body }), "Instagram");
-    console.log(`instagram container created ${r.id} uri=${r.uri ?? "(none)"} cover=${useCover && cover.url ? "url" : cover.offsetMs != null ? `offset ${cover.offsetMs}` : "none"}`);
+    console.log(`instagram container created ${r.id} uri=${r.uri ?? "(none)"} cover=${useCover && cover.url ? "url" : cover.offsetMs != null ? `offset ${cover.offsetMs}` : "none"} video=${videoUrl ? "url" : "upload"}`);
     return r;
   };
   let r: { id: string; uri?: string };

@@ -152,7 +152,7 @@ export function PublishDialog({ reelId, props, captions, onClose }: { reelId: nu
               {rows.map((r) => (
                 <li key={r.id}>
                   <span>
-                    <span className={`chip pub-${r.status}`}>{PUBLISH_LABEL[r.status]}</span> {r.channel_name ?? "(সরানো channel)"}
+                    <span className={`chip pub-${r.status}`}>{PUBLISH_LABEL[r.status]}</span> {r.channel_name ?? "(সরানো channel)"} <small className="muted">{PLATFORM_LABEL[r.platform] ?? r.platform}</small>
                     {r.scheduled_at && (r.status === "scheduled" || r.status === "scheduled_remote") ? <small className="muted"> · {showDhaka(r.scheduled_at)}</small> : null}
                     {r.error ? <small className="over"> · {r.error}</small> : null}
                   </span>
@@ -172,14 +172,14 @@ export function PublishDialog({ reelId, props, captions, onClose }: { reelId: nu
                         className="secondary"
                         title="একই caption দিয়ে এই channel-এ নতুন করে post (যেমন post মুছে ফেললে)"
                         onClick={() => {
-                          if (!window.confirm(`"${r.channel_name}"-এ এই reel আবার post করবেন? আগের post থাকলে দুটো হয়ে যাবে।`)) return;
+                          if (!window.confirm(`${PLATFORM_LABEL[r.platform] ?? r.platform} "${r.channel_name}"-এ এই reel আবার post করবেন? আগের post থাকলে দুটো হয়ে যাবে। (অন্য channel-এ পাঠাতে উপরে সেই channel টিক দিন।)`)) return;
                           void act(async () => {
                             await publishReel(reelId, [{ channel_id: r.channel_id, caption: r.caption, title: r.title }], null, Math.round(coverMoment(props) * 1000));
                             setMsg({ kind: "ok", text: "আবার পাঠানো হচ্ছে — কয়েক মিনিটে প্রকাশ হবে।" });
                           });
                         }}
                       >
-                        আবার post
+                        এখানে আবার post
                       </button>
                     ) : null}
                     {r.status === "scheduled" || r.status === "scheduled_remote" ? (

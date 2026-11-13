@@ -122,9 +122,10 @@ export class PublishWorkflow extends WorkflowEntrypoint<Env, Params> {
     });
 
     let url: string | null = null;
-    // Check every 20 s for up to ~20 minutes until `done` says so.
+    // Check every 30 s for up to 15 minutes until `done` says so (few checks: on the free plan one
+    // Workflow run may make only 50 outgoing requests).
     const poll = async (label: string, done: (s: Awaited<ReturnType<typeof facebookReelStatus>>) => boolean, timeoutMsg: string) => {
-      for (let i = 0; i < 60; i++) {
+      for (let i = 0; i < 30; i++) {
         const s = await step.do(`${label} ${i}`, { retries: { limit: 3, delay: "10 seconds" } }, async () => {
           const ch = await channelToken(this.env, row.channel_id);
           return facebookReelStatus(this.env, videoId, ch.token);
@@ -132,18 +133,18 @@ export class PublishWorkflow extends WorkflowEntrypoint<Env, Params> {
         url = s.url ?? url;
         if (s.state === "error") throw new Error(s.error);
         if (done(s)) return;
-        if (i === 59) throw new Error(timeoutMsg);
-        await step.sleep(`${label} wait ${i}`, "20 seconds");
+        if (i === 29) throw new Error(timeoutMsg);
+        await step.sleep(`${label} wait ${i}`, "30 seconds");
       }
     };
 
     if (!publishAt) {
-      await poll("check processing", (s) => s.state === "ready", "Facebook is still processing after 20 minutes — check the Page; it may appear later.");
+      await poll("check processing", (s) => s.state === "ready", "Facebook is still processing after 15 minutes — check the Page; it may appear later.");
       return { url };
     }
 
     // Scheduled on Facebook: once it's processed it sits in Meta Business Suite → Scheduled.
-    await poll("check processing", (s) => s.state === "ready" || s.processed === true, "Facebook is still processing after 20 minutes — check Meta Business Suite.");
+    await poll("check processing", (s) => s.state === "ready" || s.processed === true, "Facebook is still processing after 15 minutes — check Meta Business Suite.");
     await step.do("mark scheduled on Facebook", async () => {
       await setStatus(this.env, row.id, { status: "scheduled_remote", url, error: null });
       return true;
@@ -154,15 +155,18 @@ export class PublishWorkflow extends WorkflowEntrypoint<Env, Params> {
       return r?.status ?? "canceled";
     });
     if (still !== "scheduled_remote") return { url, canceled: true };
-    await poll("check published", (s) => s.state === "ready", "Facebook has not published the scheduled Reel 20 minutes after its time — check Meta Business Suite.");
+    await poll("check published", (s) => s.state === "ready", "Facebook has not published the scheduled Reel 15 minutes after its time — check Meta Business Suite.");
     return { url };
   }
 
-  /** A 1-hour presigned link to the reel's thumbnail, if R2 credentials are set and a thumbnail exists. */
-  private async coverUrl(reelId: number): Promise<string | null> {
+  /**
+   * A 1-hour presigned link to one of the reel's files, if R2 credentials are set and the link really
+   * serves it (a key without access gives a 403 XML page). Checked with a 1-byte range request.
+   */
+  private async presigned(reelId: number, file: string, type: string): Promise<string | null> {
     const e = this.env;
     if (!e.R2_ACCOUNT_ID || !e.R2_BUCKET_NAME || !e.R2_ACCESS_KEY_ID || !e.R2_SECRET_ACCESS_KEY) return null;
-    const key = `reels/${reelId}/thumb.jpg`;
+    const key = `reels/${reelId}/${file}`;
     if (!(await e.MEDIA.head(key))) return null;
     const url = await presignGet({
       host: `${e.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
@@ -171,55 +175,77 @@ export class PublishWorkflow extends WorkflowEntrypoint<Env, Params> {
       secretAccessKey: e.R2_SECRET_ACCESS_KEY,
       expiresSec: 3600,
     });
-    // Instagram downloads this link itself; check it really serves the image (bad R2 keys give a 403 XML page).
-    const probe = await fetch(url).catch((err: Error) => ({ ok: false, status: 0, headers: new Headers(), text: async () => err.message }) as const);
-    const type = probe.headers.get("content-type") ?? "";
-    if (!probe.ok || !type.startsWith("image/")) {
-      console.error(`cover link unusable: HTTP ${probe.status} ${type}`, (await probe.text().catch(() => "")).slice(0, 500));
-      return null;
+    try {
+      const probe = await fetch(url, { headers: { Range: "bytes=0-0" } });
+      const got = probe.headers.get("content-type") ?? "";
+      const body = await probe.text().catch(() => "");
+      if (probe.ok && got.startsWith(type)) return url;
+      console.error(`${file} link unusable: HTTP ${probe.status} ${got}`, body.slice(0, 500));
+    } catch (err) {
+      console.error(`${file} link unusable: ${(err as Error).message}`);
     }
-    return url;
+    return null;
   }
 
   /** Instagram Reel: container + resumable upload, wait FINISHED, then media_publish. Returns the link. */
   private async instagram(row: PublishRow, step: WorkflowStep): Promise<string | null> {
     const id = row.id;
-    // Container + upload. Meta's upload host sometimes answers "Request processing failed" (HTTP 400)
-    // and the same video goes through on the next try, so this step retries with a fresh container each
-    // time. Safe: an unpublished container is never posted, and publishing below is never retried.
-    const containerId = await step.do("upload to Instagram", { retries: { limit: 3, delay: "30 seconds", backoff: "exponential" }, timeout: "10 minutes" }, async () => {
-      const ch = await channelToken(this.env, row.channel_id);
-      const video = await this.env.MEDIA.get(`reels/${row.reel_id}/video.mp4`);
-      if (!video) throw new Error("Reel has no rendered video — render it first.");
-      const c = await instagramContainer(this.env, ch.account_id, ch.token, row.caption, {
-        url: await this.coverUrl(row.reel_id),
-        offsetMs: row.cover_offset_ms,
-      });
-      try {
-        await instagramUpload(c.uri, ch.token, await video.arrayBuffer());
-      } catch (e) {
-        // The upload host can answer "Request processing failed" (HTTP 400) even though it received the
-        // video and the container is processing it. The container's status decides: still processing or
-        // done → carry on (the checks below wait for it); error → fail with Meta's reason.
-        const why = await instagramContainerStatus(this.env, c.id, ch.token).catch(() => null);
-        console.error(`instagram upload answered an error for container ${c.id}; container is`, JSON.stringify(why));
-        if (why?.state !== "working" && why?.state !== "ready") throw new Error(why?.state === "error" ? `${(e as Error).message} — ${why.error}` : (e as Error).message);
-      }
-      await setStatus(this.env, id, { remote_id: c.id });
-      return c.id;
-    });
-
-    // Instagram processes the upload; check every 20 s for up to ~20 minutes.
-    for (let i = 0; i < 60; i++) {
-      const s = await step.do(`check processing ${i}`, { retries: { limit: 3, delay: "10 seconds" } }, async () => {
+    // Meta's upload host sometimes answers "Request processing failed" (HTTP 400). Sometimes it had the
+    // video anyway and the container finishes; sometimes the container stays IN_PROGRESS for good. So:
+    // prefer a video link (Instagram fetches it from R2 itself); after a shaky upload watch the container
+    // only ~3 minutes, then try again with a fresh one. Unpublished containers are never posted.
+    // Checks are kept few: on the free plan one Workflow run may make only 50 outgoing requests.
+    let containerId = "";
+    for (let attempt = 0; attempt < 3 && !containerId; attempt++) {
+      const label = attempt ? ` (try ${attempt + 1})` : "";
+      const up = await step.do(`upload to Instagram${label}`, { retries: { limit: 0, delay: "1 second" }, timeout: "10 minutes" }, async () => {
         const ch = await channelToken(this.env, row.channel_id);
-        return instagramContainerStatus(this.env, containerId, ch.token);
+        const videoUrl = await this.presigned(row.reel_id, "video.mp4", "video/");
+        const c = await instagramContainer(
+          this.env,
+          ch.account_id,
+          ch.token,
+          row.caption,
+          { url: await this.presigned(row.reel_id, "thumb.jpg", "image/"), offsetMs: row.cover_offset_ms },
+          videoUrl,
+        );
+        let shaky = false;
+        if (!videoUrl) {
+          const video = await this.env.MEDIA.get(`reels/${row.reel_id}/video.mp4`);
+          if (!video) throw new Error("Reel has no rendered video — render it first.");
+          try {
+            await instagramUpload(c.uri, ch.token, await video.arrayBuffer());
+          } catch (e) {
+            const why = await instagramContainerStatus(this.env, c.id, ch.token).catch(() => null);
+            console.error(`instagram upload answered an error for container ${c.id}; container is`, JSON.stringify(why));
+            if (why?.state !== "working" && why?.state !== "ready") throw new Error(why?.state === "error" ? `${(e as Error).message} — ${why.error}` : (e as Error).message);
+            shaky = true;
+          }
+        }
+        await setStatus(this.env, id, { remote_id: c.id });
+        return { id: c.id, shaky };
       });
-      if (s.state === "error") throw new Error(s.error);
-      if (s.state === "ready") break;
-      if (i === 59) throw new Error("Instagram is still processing after 20 minutes.");
-      await step.sleep(`wait ${i}`, "20 seconds");
+
+      // Instagram processes the video: every 30 s, up to 15 minutes (3 after a shaky upload).
+      const checks = up.shaky ? 6 : 30;
+      for (let i = 0; i < checks; i++) {
+        await step.sleep(`wait${label} ${i}`, "30 seconds");
+        const s = await step.do(`check processing${label} ${i}`, { retries: { limit: 2, delay: "10 seconds" } }, async () => {
+          const ch = await channelToken(this.env, row.channel_id);
+          return instagramContainerStatus(this.env, up.id, ch.token);
+        });
+        if (s.state === "ready") {
+          containerId = up.id;
+          break;
+        }
+        if (s.state === "error") {
+          if (up.shaky) break;
+          throw new Error(s.error);
+        }
+      }
+      if (!containerId && !up.shaky) throw new Error("Instagram is still processing after 15 minutes.");
     }
+    if (!containerId) throw new Error("Instagram did not take the upload after 3 tries (Meta's upload server kept failing) — try again later.");
 
     // Publishing is the irreversible part: never retried automatically (no duplicate posts).
     const published = await step.do("publish on Instagram", { retries: { limit: 0, delay: "1 second" } }, async () => {
@@ -236,6 +262,15 @@ export class PublishWorkflow extends WorkflowEntrypoint<Env, Params> {
    * for processing. Scheduled ones then wait for their time and confirm YouTube made them public.
    */
   private async youtube(row: PublishRow, step: WorkflowStep, publishAt?: string): Promise<{ url: string | null; canceled?: boolean }> {
+    // One access token (valid 1 hour) per invocation, so each check is a single request.
+    let token: { value: string; at: number } | null = null;
+    const accessToken = async () => {
+      if (!token || Date.now() - token.at > 45 * 60_000) {
+        const ch = await channelToken(this.env, row.channel_id);
+        token = { value: await youtubeAccessToken(this.env, ch.token), at: Date.now() };
+      }
+      return token.value;
+    };
     // One attempt only: a retry after a finished upload would post the video twice.
     const videoId = await step.do("upload to YouTube", { retries: { limit: 0, delay: "1 second" }, timeout: "15 minutes" }, async () => {
       const ch = await channelToken(this.env, row.channel_id);
@@ -251,21 +286,18 @@ export class PublishWorkflow extends WorkflowEntrypoint<Env, Params> {
     });
     const url = youtubeUrl(videoId);
 
-    // Check every 20 s for up to ~20 minutes until it is processed.
+    // Check every 30 s for up to 15 minutes until it is processed.
     let privacy = "";
-    for (let i = 0; i < 60; i++) {
-      const s = await step.do(`check processing ${i}`, { retries: { limit: 3, delay: "10 seconds" } }, async () => {
-        const ch = await channelToken(this.env, row.channel_id);
-        return youtubeVideoStatus(this.env, await youtubeAccessToken(this.env, ch.token), videoId);
-      });
+    for (let i = 0; i < 30; i++) {
+      const s = await step.do(`check processing ${i}`, { retries: { limit: 2, delay: "10 seconds" } }, async () => youtubeVideoStatus(this.env, await accessToken(), videoId));
       if (s.state === "error") throw new Error(s.error);
       if (s.state === "gone") throw new Error("YouTube: the video was removed.");
       if (s.state === "processed") {
         privacy = s.privacy;
         break;
       }
-      if (i === 59) throw new Error("YouTube is still processing after 20 minutes — check YouTube Studio; it may appear later.");
-      await step.sleep(`wait ${i}`, "20 seconds");
+      if (i === 29) throw new Error("YouTube is still processing after 15 minutes — check YouTube Studio; it may appear later.");
+      await step.sleep(`wait ${i}`, "30 seconds");
     }
 
     // Videos uploaded through an API project that has not passed YouTube's audit are locked private.
@@ -285,10 +317,7 @@ export class PublishWorkflow extends WorkflowEntrypoint<Env, Params> {
       return r?.status ?? "canceled";
     });
     if (still !== "scheduled_remote") return { url, canceled: true };
-    const s = await step.do("check published", { retries: { limit: 3, delay: "30 seconds" } }, async () => {
-      const ch = await channelToken(this.env, row.channel_id);
-      return youtubeVideoStatus(this.env, await youtubeAccessToken(this.env, ch.token), videoId);
-    });
+    const s = await step.do("check published", { retries: { limit: 3, delay: "30 seconds" } }, async () => youtubeVideoStatus(this.env, await accessToken(), videoId));
     if (s.state === "gone") throw new Error("YouTube: the scheduled video was removed.");
     if (s.state === "error") throw new Error(s.error);
     if (s.privacy !== "public") await step.do("note private", async () => (await setStatus(this.env, row.id, { error: lockedNote }), true));
