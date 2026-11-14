@@ -251,16 +251,23 @@ export const timeline = (p: ReelProps) => {
 };
 
 /**
- * The moment that looks like the thumbnail: question and every option on screen, before the
- * countdown starts. Used as the Instagram cover (seconds).
+ * The video opens on the thumbnail itself for this long, before the animated reel (whose timeline
+ * above starts after it). YouTube Shorts and other feeds that pick a video frame as the cover then
+ * get the question and options instead of an empty background.
+ */
+export const COVER_SECONDS = 0.6;
+
+/**
+ * A moment in the video that looks like the thumbnail: question and every option on screen, before
+ * the countdown starts. Used as the Instagram cover (seconds, from the start of the video).
  */
 export const coverMoment = (p: ReelProps) => {
   const t = timeline(p);
   const settled = t.optionsIn + 0.5 + Math.max(0, p.options.length - 1) * 0.12 + 0.7;
-  return Math.max(t.optionsIn + 0.3, Math.min(settled, t.thinkStart - 0.1));
+  return COVER_SECONDS + Math.max(t.optionsIn + 0.3, Math.min(settled, t.thinkStart - 0.1));
 };
 
-export const durationInFrames = (p: ReelProps) => Math.round(timeline(p).end * FPS);
+export const durationInFrames = (p: ReelProps) => Math.round((COVER_SECONDS + timeline(p).end) * FPS);
 
 /** Shrinks text as it gets longer so nothing spills off the 1080x1920 frame. */
 export const fit = (len: number, steps: [number, number][], min: number) => {

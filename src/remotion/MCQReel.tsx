@@ -5,9 +5,10 @@ import chimeUrl from "./sfx/chime.wav?url";
 import countdownUrl from "./sfx/countdown.wav?url";
 import whooshUrl from "./sfx/whoosh.wav?url";
 import { MUSIC } from "./music";
+import { MCQThumbnail } from "./MCQThumbnail";
 import { StudioScene } from "./studio";
 import { EndScreen, FONT, LogoMark, bn, clamp, ease, useFontsReady } from "./shared";
-import { type ReelProps, SEGMENTS, THINK_SECONDS, fit, themeOf, timeline } from "./types";
+import { COVER_SECONDS, type ReelProps, SEGMENTS, THINK_SECONDS, fit, themeOf, timeline } from "./types";
 
 const Check: React.FC<{ size: number; color: string }> = ({ size, color }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round">
@@ -16,7 +17,22 @@ const Check: React.FC<{ size: number; color: string }> = ({ size, color }) => (
   </svg>
 );
 
+/** The video: the thumbnail as a still for COVER_SECONDS, then the animated reel (its own timeline starts there). */
 export const MCQReel: React.FC<ReelProps> = (p) => {
+  const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
+  const hold = Math.round(COVER_SECONDS * fps);
+  return (
+    <AbsoluteFill>
+      <Sequence from={hold} premountFor={fps}>
+        <ReelBody {...p} />
+      </Sequence>
+      {frame < hold ? <MCQThumbnail {...p} /> : null}
+    </AbsoluteFill>
+  );
+};
+
+const ReelBody: React.FC<ReelProps> = (p) => {
   const C = themeOf(p.theme);
   useFontsReady();
   const frame = useCurrentFrame();
