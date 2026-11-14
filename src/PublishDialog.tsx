@@ -167,7 +167,7 @@ export function PublishDialog({ reelId, props, captions, onClose }: { reelId: nu
                         আবার চেষ্টা
                       </button>
                     ) : null}
-                    {(r.status === "published" || r.status === "canceled") && r.channel_name ? (
+                    {(r.status === "published" || r.status === "canceled") && r.channel_name && r.caption ? (
                       <button
                         className="secondary"
                         title="একই caption দিয়ে এই channel-এ নতুন করে post (যেমন post মুছে ফেললে)"

@@ -78,6 +78,10 @@ export type PostStats = {
   channel_name: string | null;
   reel_title: string | null;
   question_id: number | null;
+  /** Set when the reel has a rendered video (and so a thumbnail). */
+  rendered_at: string | null;
+  /** The platform's post id (YouTube video id for thumbnails). */
+  remote_id: string | null;
   views: number | null;
   reach: number | null;
   likes: number | null;
@@ -87,4 +91,4 @@ export type PostStats = {
   avg_watch_ms: number | null;
 };
 export const listStats = () => request<{ data: PostStats[] }>("/api/analytics").then((r) => r.data);
-export const refreshStats = () => request<{ updated: number; failed: number; remaining: number }>("/api/analytics/refresh", { method: "POST" });
+export const refreshStats = () => request<{ updated: number; failed: number; remaining: number; imported: number }>("/api/analytics/refresh", { method: "POST" });

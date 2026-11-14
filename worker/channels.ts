@@ -85,6 +85,12 @@ export async function channelsApi(request: Request, env: Env, url: URL, user: st
         )
           .bind(row.platform, a.id, a.name, a.picture, a.token_enc, user)
           .run();
+        // Posts made through this account before it was removed belong to it again.
+        await env.DB.prepare(
+          "UPDATE publishes SET channel_id = (SELECT id FROM channels WHERE platform = ? AND account_id = ?) WHERE platform = ? AND account_id = ? AND channel_id NOT IN (SELECT id FROM channels)",
+        )
+          .bind(row.platform, a.id, row.platform, a.id)
+          .run();
       }
       await env.DB.prepare("DELETE FROM oauth_pending WHERE state = ?").bind(row.state).run();
       return json({ added: chosen.length });

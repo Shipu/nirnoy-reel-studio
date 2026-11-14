@@ -1,5 +1,7 @@
+import type React from "react";
 import { useEffect, useMemo, useState } from "react";
 import { type Channel, type PostStats, PLATFORM_LABEL, listStats, refreshStats, showDhaka } from "./channels";
+import { mediaUrl } from "./reels";
 import { navigate } from "./router";
 
 /**
@@ -23,7 +25,40 @@ const watch = (ms: number | null) => (ms == null ? "—" : `${(ms / 1000).toLoca
 /** Sum that stays null when no post reports the metric (so "—" means "not reported", not 0). */
 const sum = (rows: PostStats[], k: Metric) => rows.reduce<number | null>((a, r) => (r[k] == null ? a : (a ?? 0) + (r[k] as number)), null);
 
-type ReelRow = { reel_id: number; title: string; platforms: Channel["platform"][] } & Record<Metric, number | null>;
+type ReelRow = { reel_id: number; title: string; rendered_at: string | null; platforms: Channel["platform"][] } & Record<Metric, number | null>;
+
+/**
+ * Thumbnail (9:16): the reel's own when it was rendered here (click opens the reel), else YouTube's
+ * for videos uploaded outside the studio.
+ */
+const Thumb = ({ reelId, version, youtubeId }: { reelId: number; version: string | null; youtubeId?: string | null }) => {
+  const hide = (e: React.SyntheticEvent<HTMLImageElement>) => (e.currentTarget.style.visibility = "hidden");
+  if (reelId && version)
+    return (
+      <button className="thumb" onClick={() => navigate(`/reels/${reelId}`)} title={`Reel #${reelId} খুলুন`}>
+        <img src={mediaUrl(reelId, "thumb.jpg", version)} alt="" loading="lazy" onError={hide} />
+      </button>
+    );
+  if (youtubeId)
+    return (
+      <span className="thumb">
+        <img src={`https://i.ytimg.com/vi/${youtubeId}/hqdefault.jpg`} alt="" loading="lazy" onError={hide} />
+      </span>
+    );
+  return <span className="thumb empty" />;
+};
+
+/** Reel name: a link to the reel, or just the video title for posts made outside the studio. */
+const ReelName = ({ reelId, title }: { reelId: number; title: string | null }) =>
+  reelId ? (
+    <button className="link" onClick={() => navigate(`/reels/${reelId}`)} title={title ?? ""}>
+      #{reelId} {title ?? ""}
+    </button>
+  ) : (
+    <span className="ext" title={title ?? ""}>
+      {title ?? "—"} <small className="muted">(studio-র বাইরে)</small>
+    </span>
+  );
 
 export function AnalyticsPage() {
   const [rows, setRows] = useState<PostStats[] | null>(null);
@@ -46,14 +81,16 @@ export function AnalyticsPage() {
     try {
       let updated = 0;
       let failed = 0;
+      let imported = 0;
       for (let i = 0; i < 6; i++) {
         const r = await refreshStats();
         updated += r.updated;
         failed += r.failed;
+        imported += r.imported;
         if (r.remaining === 0 || r.updated + r.failed === 0) break;
       }
       await load();
-      setMsg({ kind: failed ? "error" : "ok", text: `${updated}টি post আপডেট হয়েছে${failed ? `, ${failed}টিতে সমস্যা (নিচে লাল লেখা দেখুন)` : ""}।` });
+      setMsg({ kind: failed ? "error" : "ok", text: `${imported ? `YouTube থেকে ${imported}টি নতুন video যোগ হয়েছে; ` : ""}${updated}টি post আপডেট হয়েছে${failed ? `, ${failed}টিতে সমস্যা (নিচে লাল লেখা দেখুন)` : ""}।` });
     } catch (e) {
       setMsg({ kind: "error", text: (e as Error).message });
     }
@@ -68,11 +105,18 @@ export function AnalyticsPage() {
   }, [shown, sortKey]);
 
   const reels = useMemo(() => {
-    const m = new Map<number, PostStats[]>();
-    for (const r of shown) m.set(r.reel_id, [...(m.get(r.reel_id) ?? []), r]);
-    const out: (ReelRow & { published_at: string })[] = [...m.entries()].map(([reel_id, list]) => ({
-      reel_id,
-      title: list[0].reel_title ?? `Reel #${reel_id}`,
+    // Posts made outside the studio (reel 0) stay one row each.
+    const m = new Map<string, PostStats[]>();
+    for (const r of shown) {
+      const key = r.reel_id ? `r${r.reel_id}` : `p${r.id}`;
+      m.set(key, [...(m.get(key) ?? []), r]);
+    }
+    const out: (ReelRow & { key: string; youtube_id: string | null; published_at: string })[] = [...m.entries()].map(([key, list]) => ({
+      key,
+      reel_id: list[0].reel_id,
+      title: list[0].reel_title ?? `Reel #${list[0].reel_id}`,
+      rendered_at: list[0].rendered_at,
+      youtube_id: list.find((r) => r.platform === "youtube")?.remote_id ?? null,
       platforms: [...new Set(list.map((r) => r.platform))],
       published_at: list.map((r) => r.published_at).sort()[0],
       ...(Object.fromEntries(METRICS.map(({ key }) => [key, sum(list, key)])) as Record<Metric, number | null>),
@@ -177,6 +221,7 @@ export function AnalyticsPage() {
               <table className="stats">
                 <thead>
                   <tr>
+                    <th aria-label="Thumbnail" />
                     <th>Reel</th>
                     <th>Platform</th>
                     {head("প্রকাশ", "published_at")}
@@ -188,10 +233,11 @@ export function AnalyticsPage() {
                 <tbody>
                   {posts.map((r) => (
                     <tr key={r.id}>
+                      <td className="thumb-cell">
+                        <Thumb reelId={r.reel_id} version={r.rendered_at} youtubeId={r.platform === "youtube" ? r.remote_id : null} />
+                      </td>
                       <td className="reel-cell">
-                        <button className="link" onClick={() => navigate(`/reels/${r.reel_id}`)} title={r.reel_title ?? ""}>
-                          #{r.reel_id} {r.reel_title ?? ""}
-                        </button>
+                        <ReelName reelId={r.reel_id} title={r.reel_title} />
                         {r.stats_error ? <small className="over">{r.stats_error}</small> : null}
                       </td>
                       <td>
@@ -220,6 +266,7 @@ export function AnalyticsPage() {
               <table className="stats">
                 <thead>
                   <tr>
+                    <th aria-label="Thumbnail" />
                     <th>Reel</th>
                     <th>Platform</th>
                     {head("প্রথম প্রকাশ", "published_at")}
@@ -228,11 +275,12 @@ export function AnalyticsPage() {
                 </thead>
                 <tbody>
                   {reels.map((r) => (
-                    <tr key={r.reel_id}>
+                    <tr key={r.key}>
+                      <td className="thumb-cell">
+                        <Thumb reelId={r.reel_id} version={r.rendered_at} youtubeId={r.youtube_id} />
+                      </td>
                       <td className="reel-cell">
-                        <button className="link" onClick={() => navigate(`/reels/${r.reel_id}`)} title={r.title}>
-                          #{r.reel_id} {r.title}
-                        </button>
+                        <ReelName reelId={r.reel_id} title={r.title} />
                       </td>
                       <td>{r.platforms.map((p) => PLATFORM_LABEL[p] ?? p).join(", ")}</td>
                       <td className="muted date">{showDhaka(r.published_at)}</td>

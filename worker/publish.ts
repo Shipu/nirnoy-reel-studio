@@ -354,7 +354,7 @@ export async function publishApi(request: Request, env: Env, url: URL, user: str
     const created = [];
     const chans = [];
     for (const t of targets) {
-      const ch = await env.DB.prepare("SELECT id, platform FROM channels WHERE id = ?").bind(Number(t.channel_id)).first<{ id: number; platform: string }>();
+      const ch = await env.DB.prepare("SELECT id, platform, account_id FROM channels WHERE id = ?").bind(Number(t.channel_id)).first<{ id: number; platform: string; account_id: string }>();
       if (ch) chans.push({ t, ch });
     }
     if (scheduled && chans.some(({ ch }) => ch.platform === "facebook")) {
@@ -363,9 +363,9 @@ export async function publishApi(request: Request, env: Env, url: URL, user: str
     }
     for (const { t, ch } of chans) {
       const row = await env.DB.prepare(
-        "INSERT INTO publishes (reel_id, channel_id, platform, caption, title, scheduled_at, cover_offset_ms, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
+        "INSERT INTO publishes (reel_id, channel_id, account_id, platform, caption, title, scheduled_at, cover_offset_ms, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
       )
-        .bind(reelId, ch.id, ch.platform, String(t.caption), typeof t.title === "string" && t.title.trim() ? t.title.trim().slice(0, 200) : null, scheduled, coverMs, user)
+        .bind(reelId, ch.id, ch.account_id, ch.platform, String(t.caption), typeof t.title === "string" && t.title.trim() ? t.title.trim().slice(0, 200) : null, scheduled, coverMs, user)
         .first<{ id: number }>();
       if (row) {
         await start(env, row.id);
