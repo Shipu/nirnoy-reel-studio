@@ -82,6 +82,8 @@ export type PostStats = {
   rendered_at: string | null;
   /** The platform's post id (YouTube video id for thumbnails). */
   remote_id: string | null;
+  /** Platform cover link for posts made outside the studio. */
+  thumb_url: string | null;
   views: number | null;
   reach: number | null;
   likes: number | null;

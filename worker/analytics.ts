@@ -162,6 +162,9 @@ async function importYoutubeUploads(env: Env, channel: { id: number; account_id:
   const uploads = ch.items?.[0]?.contentDetails?.relatedPlaylists?.uploads;
   if (!uploads) return { added: 0, requests };
 
+  const known = new Set(
+    (await env.DB.prepare("SELECT remote_id FROM publishes WHERE platform = 'youtube' AND remote_id IS NOT NULL").all<{ remote_id: string }>()).results.map((r) => r.remote_id),
+  );
   const videos: { id: string; title: string; at: string }[] = [];
   let page = "";
   for (let i = 0; i < 4; i++) {
@@ -174,13 +177,11 @@ async function importYoutubeUploads(env: Env, channel: { id: number; account_id:
       const id = it.contentDetails?.videoId;
       if (id) videos.push({ id, title: it.snippet?.title ?? id, at: it.contentDetails?.videoPublishedAt ?? it.snippet?.publishedAt ?? "" });
     }
-    if (!r.nextPageToken) break;
+    // Newest first: once a page reaches videos we already have, the rest are older and known too.
+    if (!r.nextPageToken || (r.items ?? []).some((it) => known.has(it.contentDetails?.videoId ?? ""))) break;
     page = r.nextPageToken;
   }
 
-  const known = new Set(
-    (await env.DB.prepare("SELECT remote_id FROM publishes WHERE platform = 'youtube' AND remote_id IS NOT NULL").all<{ remote_id: string }>()).results.map((r) => r.remote_id),
-  );
   const reelOf = new Map<string, number>();
   for (const r of (await env.DB.prepare("SELECT id, youtube_url FROM reels WHERE youtube_url IS NOT NULL").all<{ id: number; youtube_url: string }>()).results) {
     const vid = youtubeId(r.youtube_url);
@@ -198,6 +199,64 @@ async function importYoutubeUploads(env: Env, channel: { id: number; account_id:
     )
       .bind(reelOf.get(v.id) ?? 0, channel.id, channel.account_id, v.title.slice(0, 200), v.id, `https://www.youtube.com/shorts/${v.id}`, at, at)
       .run();
+    added++;
+  }
+  return { added, requests };
+}
+
+type MetaItem = { id: string; title: string; at: string | null; url: string | null; thumb: string | null };
+
+/**
+ * Brings Reels posted on the Facebook Page / Instagram account outside the studio into analytics
+ * (reel_id 0, titled by the first line of the caption), and refreshes every listed post's cover link
+ * (platform CDN links expire). Pages through newest first until it reaches known posts.
+ */
+async function importMeta(env: Env, channel: { id: number; platform: string; account_id: string }, token: string): Promise<{ added: number; requests: number }> {
+  const fb = channel.platform === "facebook";
+  const known = new Set(
+    (await env.DB.prepare("SELECT remote_id FROM publishes WHERE platform = ? AND remote_id IS NOT NULL").bind(channel.platform).all<{ remote_id: string }>()).results.map(
+      (r) => r.remote_id,
+    ),
+  );
+  const fields = fb ? "id,description,created_time,permalink_url,picture" : "id,caption,media_type,media_product_type,timestamp,permalink,thumbnail_url";
+  let next: string | undefined = `${graph(env)}/${channel.account_id}/${fb ? "video_reels" : "media"}?${new URLSearchParams({ fields, limit: "50", access_token: token })}`;
+  const items: MetaItem[] = [];
+  let requests = 0;
+  for (let i = 0; i < 4 && next; i++) {
+    const r: { data?: Record<string, string>[]; paging?: { next?: string } } = await getJson(next);
+    requests++;
+    for (const d of r.data ?? []) {
+      // Instagram: Reels only (the studio makes reels; photos have other metrics).
+      if (!fb && d.media_product_type !== "REELS") continue;
+      const text = (fb ? d.description : d.caption) ?? "";
+      const link = fb ? d.permalink_url : d.permalink;
+      items.push({
+        id: d.id,
+        title: text.split("\n").find((l) => l.trim())?.trim().slice(0, 120) ?? "",
+        at: fb ? d.created_time : d.timestamp,
+        url: link ? (link.startsWith("http") ? link : `https://www.facebook.com${link}`) : null,
+        thumb: (fb ? d.picture : d.thumbnail_url) ?? null,
+      });
+    }
+    if ((r.data ?? []).some((d) => known.has(d.id))) break;
+    next = r.paging?.next;
+  }
+
+  let added = 0;
+  for (const it of items) {
+    if (known.has(it.id)) {
+      if (it.thumb) await env.DB.prepare("UPDATE publishes SET thumb_url = ? WHERE platform = ? AND remote_id = ?").bind(it.thumb, channel.platform, it.id).run();
+      continue;
+    }
+    // "2026-11-10T08:00:00+0000" → "2026-11-10 08:00:00" (UTC)
+    const at = it.at && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(it.at) ? new Date(it.at).toISOString().slice(0, 19).replace("T", " ") : null;
+    await env.DB.prepare(
+      `INSERT INTO publishes (reel_id, channel_id, account_id, platform, caption, title, status, remote_id, url, thumb_url, created_by, created_at, updated_at)
+       VALUES (0, ?, ?, ?, '', ?, 'published', ?, ?, ?, ?, COALESCE(?, datetime('now')), COALESCE(?, datetime('now')))`,
+    )
+      .bind(channel.id, channel.account_id, channel.platform, it.title || null, it.id, it.url, it.thumb, `${channel.platform}-import`, at, at)
+      .run();
+    known.add(it.id);
     added++;
   }
   return { added, requests };
@@ -255,6 +314,25 @@ export async function refreshStats(env: Env, minAgeMinutes = 0): Promise<{ updat
     } catch (e) {
       budget -= 2;
       console.error(`youtube import for channel ${c.id}: ${(e as Error).message}`);
+    }
+  }
+
+  // Facebook Pages and Instagram accounts: Reels posted outside the studio.
+  const metaChannels = (await env.DB.prepare("SELECT id, platform, account_id FROM channels WHERE platform IN ('facebook', 'instagram')").all<{
+    id: number;
+    platform: string;
+    account_id: string;
+  }>()).results;
+  for (const c of metaChannels) {
+    if (budget < 10) break;
+    try {
+      const ch = await channelToken(env, c.id);
+      const r = await importMeta(env, c, ch.token);
+      budget -= r.requests;
+      imported += r.added;
+    } catch (e) {
+      budget -= 1;
+      console.error(`${c.platform} import for channel ${c.id}: ${(e as Error).message}`);
     }
   }
 
@@ -332,7 +410,7 @@ export async function analyticsApi(request: Request, env: Env, url: URL): Promis
   if (path === "/api/analytics" && request.method === "GET") {
     const { results } = await env.DB.prepare(
       `SELECT p.id, p.reel_id, p.platform, p.url, p.created_at, p.updated_at AS published_at, p.stats_at, p.stats_error,
-              c.name AS channel_name, COALESCE(r.title, p.title) AS reel_title, r.question_id, r.rendered_at, p.remote_id,
+              c.name AS channel_name, COALESCE(r.title, p.title) AS reel_title, r.question_id, r.rendered_at, p.remote_id, p.thumb_url,
               s.views, s.reach, s.likes, s.comments, s.shares, s.saves, s.avg_watch_ms
        FROM publishes p
        LEFT JOIN channels c ON c.id = p.channel_id

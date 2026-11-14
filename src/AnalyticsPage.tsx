@@ -31,7 +31,7 @@ type ReelRow = { reel_id: number; title: string; rendered_at: string | null; pla
  * Thumbnail (9:16): the reel's own when it was rendered here (click opens the reel), else YouTube's
  * for videos uploaded outside the studio.
  */
-const Thumb = ({ reelId, version, youtubeId }: { reelId: number; version: string | null; youtubeId?: string | null }) => {
+const Thumb = ({ reelId, version, youtubeId, src }: { reelId: number; version: string | null; youtubeId?: string | null; src?: string | null }) => {
   const hide = (e: React.SyntheticEvent<HTMLImageElement>) => (e.currentTarget.style.visibility = "hidden");
   if (reelId && version)
     return (
@@ -39,10 +39,11 @@ const Thumb = ({ reelId, version, youtubeId }: { reelId: number; version: string
         <img src={mediaUrl(reelId, "thumb.jpg", version)} alt="" loading="lazy" onError={hide} />
       </button>
     );
-  if (youtubeId)
+  const outside = src ?? (youtubeId ? `https://i.ytimg.com/vi/${youtubeId}/hqdefault.jpg` : null);
+  if (outside)
     return (
       <span className="thumb">
-        <img src={`https://i.ytimg.com/vi/${youtubeId}/hqdefault.jpg`} alt="" loading="lazy" onError={hide} />
+        <img src={outside} alt="" loading="lazy" referrerPolicy="no-referrer" onError={hide} />
       </span>
     );
   return <span className="thumb empty" />;
@@ -56,7 +57,7 @@ const ReelName = ({ reelId, title }: { reelId: number; title: string | null }) =
     </button>
   ) : (
     <span className="ext" title={title ?? ""}>
-      {title ?? "—"} <small className="muted">(studio-র বাইরে)</small>
+      {title || "(caption নেই)"} <small className="muted">(studio-র বাইরে)</small>
     </span>
   );
 
@@ -111,12 +112,13 @@ export function AnalyticsPage() {
       const key = r.reel_id ? `r${r.reel_id}` : `p${r.id}`;
       m.set(key, [...(m.get(key) ?? []), r]);
     }
-    const out: (ReelRow & { key: string; youtube_id: string | null; published_at: string })[] = [...m.entries()].map(([key, list]) => ({
+    const out: (ReelRow & { key: string; youtube_id: string | null; thumb_url: string | null; published_at: string })[] = [...m.entries()].map(([key, list]) => ({
       key,
       reel_id: list[0].reel_id,
       title: list[0].reel_title ?? `Reel #${list[0].reel_id}`,
       rendered_at: list[0].rendered_at,
       youtube_id: list.find((r) => r.platform === "youtube")?.remote_id ?? null,
+      thumb_url: list.find((r) => r.thumb_url)?.thumb_url ?? null,
       platforms: [...new Set(list.map((r) => r.platform))],
       published_at: list.map((r) => r.published_at).sort()[0],
       ...(Object.fromEntries(METRICS.map(({ key }) => [key, sum(list, key)])) as Record<Metric, number | null>),
@@ -234,7 +236,7 @@ export function AnalyticsPage() {
                   {posts.map((r) => (
                     <tr key={r.id}>
                       <td className="thumb-cell">
-                        <Thumb reelId={r.reel_id} version={r.rendered_at} youtubeId={r.platform === "youtube" ? r.remote_id : null} />
+                        <Thumb reelId={r.reel_id} version={r.rendered_at} youtubeId={r.platform === "youtube" ? r.remote_id : null} src={r.thumb_url} />
                       </td>
                       <td className="reel-cell">
                         <ReelName reelId={r.reel_id} title={r.reel_title} />
@@ -277,7 +279,7 @@ export function AnalyticsPage() {
                   {reels.map((r) => (
                     <tr key={r.key}>
                       <td className="thumb-cell">
-                        <Thumb reelId={r.reel_id} version={r.rendered_at} youtubeId={r.youtube_id} />
+                        <Thumb reelId={r.reel_id} version={r.rendered_at} youtubeId={r.youtube_id} src={r.thumb_url} />
                       </td>
                       <td className="reel-cell">
                         <ReelName reelId={r.reel_id} title={r.title} />
