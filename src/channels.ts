@@ -65,3 +65,26 @@ export const dhakaToIso = (local: string) => new Date(`${local}:00+06:00`).toISO
 /** Stored UTC "YYYY-MM-DD HH:MM:SS" → readable Bangladesh time. */
 export const showDhaka = (utc: string) =>
   new Date(`${utc.replace(" ", "T")}Z`).toLocaleString("bn-BD", { timeZone: "Asia/Dhaka", dateStyle: "medium", timeStyle: "short" });
+
+/** One published post with its latest numbers (null = the platform doesn't report it / not fetched yet). */
+export type PostStats = {
+  id: number;
+  reel_id: number;
+  platform: Channel["platform"];
+  url: string | null;
+  published_at: string;
+  stats_at: string | null;
+  stats_error: string | null;
+  channel_name: string | null;
+  reel_title: string | null;
+  question_id: number | null;
+  views: number | null;
+  reach: number | null;
+  likes: number | null;
+  comments: number | null;
+  shares: number | null;
+  saves: number | null;
+  avg_watch_ms: number | null;
+};
+export const listStats = () => request<{ data: PostStats[] }>("/api/analytics").then((r) => r.data);
+export const refreshStats = () => request<{ updated: number; failed: number; remaining: number }>("/api/analytics/refresh", { method: "POST" });

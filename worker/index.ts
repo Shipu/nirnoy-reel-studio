@@ -1,4 +1,5 @@
 import { createRemoteJWKSet, jwtVerify } from "jose";
+import { analyticsApi, refreshStats } from "./analytics";
 import { channelsApi, oauthCallback } from "./channels";
 import { reviewExplanation } from "./gemini";
 import { publishApi } from "./publish";
@@ -466,6 +467,7 @@ export default {
 
     if (isOauth) return oauthCallback(request, env, url);
     if (url.pathname.startsWith("/api/channels")) return channelsApi(request, env, url, user);
+    if (url.pathname.startsWith("/api/analytics")) return analyticsApi(request, env, url);
     if (/^\/api\/reels\/\d+\/publish\/?$/.test(url.pathname) || url.pathname.startsWith("/api/publishes")) return publishApi(request, env, url, user);
 
     if (request.method === "POST" && url.pathname === "/api/tts") return tts(request, env, ctx);
@@ -503,5 +505,15 @@ export default {
     if (url.pathname.startsWith("/api/reels")) return reels(request, env, url, user);
 
     return json({ message: "Not found." }, 404);
+  },
+
+  /** Cron (wrangler.jsonc triggers): refresh post analytics a few times a day. */
+  async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext) {
+    ctx.waitUntil(
+      refreshStats(env, 120).then(
+        (r) => console.log(`analytics refresh: ${r.updated} updated, ${r.failed} failed, ${r.remaining} waiting`),
+        (e: Error) => console.error(`analytics refresh failed: ${e.message}`),
+      ),
+    );
   },
 } satisfies ExportedHandler<Env>;

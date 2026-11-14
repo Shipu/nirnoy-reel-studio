@@ -127,6 +127,9 @@ export function ReelsPage() {
           নির্ণয় <span>Reel Studio</span>
         </h1>
         <div className="row">
+          <button className="secondary" onClick={() => navigate("/analytics")}>
+            Analytics
+          </button>
           <button className="secondary" onClick={() => navigate("/channels")}>
             Channels
           </button>

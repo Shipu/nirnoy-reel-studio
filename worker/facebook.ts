@@ -9,7 +9,8 @@ const GRAPH_VERSION = (env: Env) => env.META_GRAPH_VERSION || "v23.0";
 export const graph = (env: Env) => `${env.META_GRAPH_BASE || "https://graph.facebook.com"}/${GRAPH_VERSION(env)}`;
 export const rupload = (env: Env) => `${env.META_RUPLOAD_BASE || "https://rupload.facebook.com"}/video-upload/${GRAPH_VERSION(env)}`;
 
-export const FACEBOOK_SCOPES = ["pages_show_list", "pages_read_engagement", "pages_manage_posts", "business_management"];
+// read_insights: Reel plays, reach and watch time for the analytics page.
+export const FACEBOOK_SCOPES = ["pages_show_list", "pages_read_engagement", "pages_manage_posts", "business_management", "read_insights"];
 
 export type FacebookPage = { id: string; name: string; picture: string | null; token: string };
 

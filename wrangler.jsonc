@@ -45,6 +45,11 @@
 			"class_name": "PublishWorkflow"
 		}
 	],
+	"triggers": {
+		// Analytics: fetch post numbers from each platform (worker/analytics.ts). Each run handles the
+		// stalest posts within the request budget, so runs are frequent and light.
+		"crons": ["17 */2 * * *"]
+	},
 	"routes": [
 		{
 			"pattern": "xyz.nirnoy.app",

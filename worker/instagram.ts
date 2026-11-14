@@ -9,7 +9,8 @@ import type { Env } from "./index";
  * The Page token is used for the Instagram account's calls.
  */
 
-export const INSTAGRAM_SCOPES = ["pages_show_list", "pages_read_engagement", "business_management", "instagram_basic", "instagram_content_publish"];
+// instagram_manage_insights: views, reach, saves and watch time for the analytics page.
+export const INSTAGRAM_SCOPES = ["pages_show_list", "pages_read_engagement", "business_management", "instagram_basic", "instagram_content_publish", "instagram_manage_insights"];
 
 /** Instagram accounts linked to your Pages; the token is the linked Page's token. */
 export async function instagramAccounts(env: Env, userToken: string): Promise<FacebookPage[]> {

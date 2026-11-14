@@ -190,3 +190,32 @@ a.btn.connect { background: var(--primary); color: #fff; padding: 9px 16px; font
 .ai-warn { margin: 0; padding: 8px 10px; border-radius: 8px; background: #fee2e2; color: var(--danger); font-size: 14px; }
 .ai-problems { margin: 0; padding-left: 18px; font-size: 14px; color: var(--ink); }
 .ai-text { margin: 0; padding: 8px 10px; border-radius: 8px; background: #fff; border: 1px solid var(--line); line-height: 1.6; font-size: 14px; }
+
+/* Analytics page */
+.list-page.analytics { max-width: 1280px; }
+.row.filters { align-items: center; flex-wrap: wrap; gap: 12px; }
+.row.filters .spacer { flex: 1; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--card); }
+.seg button { background: none; color: var(--ink-2); border-radius: 0; padding: 7px 14px; font-size: 14px; }
+.seg button + button { border-left: 1px solid var(--line); }
+.seg button.on { background: #eef2ff; color: var(--primary); font-weight: 600; }
+.seg button:hover:not(.on) { background: #f6f5fa; }
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+.kpi { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+.kpi-label { font-size: 13px; color: var(--ink-2); }
+.kpi-value { font-size: 28px; font-weight: 700; color: var(--ink); margin-top: 4px; font-variant-numeric: tabular-nums; }
+.table-wrap { overflow-x: auto; }
+table.stats { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--line); border-radius: 12px; font-size: 14px; }
+table.stats th { text-align: left; font-weight: 600; color: var(--ink-2); padding: 10px 12px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+table.stats td { padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+table.stats tr:last-child td { border-bottom: 0; }
+table.stats tbody tr:hover td { background: #faf9fd; }
+table.stats .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+table.stats th:has(.sort) { text-align: right; }
+table.stats .sort { color: var(--ink-2); font-weight: 600; font-size: 14px; }
+table.stats .sort.on { color: var(--primary); }
+table.stats .reel-cell { max-width: 340px; }
+table.stats .reel-cell button { text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; display: block; }
+table.stats .reel-cell small { display: block; }
+table.stats th.num { text-align: right; }
+table.stats td.date { white-space: nowrap; text-align: right; }
