@@ -338,10 +338,13 @@ export async function analyticsApi(request: Request, env: Env, url: URL): Promis
        LEFT JOIN channels c ON c.id = p.channel_id
        LEFT JOIN reels r ON r.id = p.reel_id
        LEFT JOIN post_stats s ON s.id = (SELECT id FROM post_stats WHERE publish_id = p.id ORDER BY fetched_at DESC, id DESC LIMIT 1)
-       WHERE p.status = 'published'
+       WHERE p.status = 'published' AND (p.stats_error IS NULL OR p.stats_error != ?)
        ORDER BY p.updated_at DESC
        LIMIT 1000`,
-    ).all();
+    )
+      // Posts removed on the platform are left out.
+      .bind(GONE)
+      .all();
     return json({ data: results });
   }
 
