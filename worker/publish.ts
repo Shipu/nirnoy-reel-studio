@@ -2,6 +2,7 @@ import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloud
 import { channelToken } from "./channels";
 import { FB_SCHEDULE_MAX_MS, FB_SCHEDULE_MIN_MS, facebookDeleteVideo, facebookReelFinish, facebookReelStart, facebookReelStatus, facebookReelUpload, facebookThumbnail } from "./facebook";
 import { instagramContainer, instagramContainerStatus, instagramPublish, instagramUpload } from "./instagram";
+import { GONE } from "./analytics";
 import { youtubeAccessToken, youtubeDelete, youtubeThumbnail, youtubeUpload, youtubeUrl, youtubeVideoStatus } from "./youtube";
 import { presignGet } from "./presign";
 import type { Env } from "./index";
@@ -377,9 +378,13 @@ export async function publishApi(request: Request, env: Env, url: URL, user: str
 
   if (path === "/api/publishes" && request.method === "GET") {
     const reelId = Number(url.searchParams.get("reel_id"));
-    const where = Number.isInteger(reelId) && reelId > 0 ? "WHERE p.reel_id = ?" : "";
-    const stmt = env.DB.prepare(`SELECT ${COLUMNS} FROM publishes p LEFT JOIN channels c ON c.id = p.channel_id ${where} ORDER BY p.id DESC LIMIT 500`);
-    const { results } = await (where ? stmt.bind(reelId) : stmt).all();
+    const byReel = Number.isInteger(reelId) && reelId > 0;
+    // Posts removed on the platform (found by the analytics refresh) are left out.
+    const stmt = env.DB.prepare(
+      `SELECT ${COLUMNS} FROM publishes p LEFT JOIN channels c ON c.id = p.channel_id
+       WHERE (p.stats_error IS NULL OR p.stats_error != ?) ${byReel ? "AND p.reel_id = ?" : ""} ORDER BY p.id DESC LIMIT 500`,
+    );
+    const { results } = await (byReel ? stmt.bind(GONE, reelId) : stmt.bind(GONE)).all();
     return json({ data: results });
   }
 

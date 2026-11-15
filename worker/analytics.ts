@@ -31,7 +31,7 @@ type Stats = {
 };
 
 /** Stored as stats_error for posts the platform no longer has; those are not fetched again. */
-const GONE = "Platform-এ post-টি আর নেই (মুছে ফেলা হয়েছে?)।";
+export const GONE = "Platform-এ post-টি আর নেই (মুছে ফেলা হয়েছে?)।";
 const isGone = (m: string) => /does not exist|nonexisting node|Unsupported get request/i.test(m) && !/field/i.test(m);
 const isPermission = (m: string) => /permission|\(#10\)|\(#200\)|nonexisting field \(video_insights\)/i.test(m);
 const PERMISSION_NOTE = "শুধু likes/comments — বাকি সংখ্যার জন্য Meta app-এ insights permission দিয়ে channel আবার connect করুন।";

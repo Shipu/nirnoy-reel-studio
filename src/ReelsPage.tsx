@@ -18,12 +18,42 @@ import {
 import { PLATFORMS, PLATFORM_INFO, type Platform, captionsFor } from "./captions";
 import { navigate } from "./router";
 import { syncBuiltinVoices } from "./voices";
-import { type Publish, PUBLISH_LABEL, listPublishes } from "./channels";
+import { type Publish, listPublishes, showDhaka } from "./channels";
 import { PublishDialog } from "./PublishDialog";
 import type { ReelData } from "./reels";
 
 type Status = { kind: "idle" | "busy" | "error" | "ok"; text: string };
 const FILTERS: (ReelStatus | "all")[] = ["all", "draft", "rendered", "published"];
+
+/** One pill per platform on the reel list, shown only when the reel has a post there. */
+const PILL_PLATFORMS = [
+  { platform: "facebook", label: "Facebook" },
+  { platform: "youtube", label: "YouTube" },
+  { platform: "instagram", label: "Instagram" },
+  { platform: "tiktok", label: "TikTok" },
+] as const;
+type PillKind = "published" | "scheduled" | "publishing" | "failed";
+const PILL_LABEL: Record<PillKind, string> = { published: "Posted", scheduled: "Scheduled", publishing: "Posting…", failed: "Failed" };
+
+/**
+ * A platform's state for one reel: Posted if any post went out (links to it), else Posting… / Scheduled
+ * while one is on its way, else Failed. A YouTube link set by hand ("YouTube-এ দিয়েছি") counts as Posted.
+ */
+function platformPills(posts: Publish[], youtubeUrl: string | null) {
+  return PILL_PLATFORMS.flatMap(({ platform, label }) => {
+    const mine = posts.filter((p) => p.platform === platform && p.status !== "canceled");
+    const done = mine.find((p) => p.status === "published");
+    const manual = platform === "youtube" ? youtubeUrl : null;
+    if (done || manual) return [{ platform, label, kind: "published" as PillKind, url: done?.url ?? manual, title: done?.channel_name ?? "" }];
+    const going = mine.find((p) => p.status === "publishing");
+    if (going) return [{ platform, label, kind: "publishing" as PillKind, url: null, title: going.channel_name ?? "" }];
+    const waiting = mine.find((p) => p.status === "scheduled" || p.status === "scheduled_remote");
+    if (waiting) return [{ platform, label, kind: "scheduled" as PillKind, url: null, title: waiting.scheduled_at ? `${showDhaka(waiting.scheduled_at)} (বাংলাদেশ সময়)` : "" }];
+    const failed = mine.find((p) => p.status === "failed");
+    if (failed) return [{ platform, label, kind: "failed" as PillKind, url: null, title: failed.error ?? "" }];
+    return [];
+  });
+}
 
 /** Reels list: every draft / render / published reel, with "new reel" and the YouTube manual-upload helpers. */
 export function ReelsPage() {
@@ -238,28 +268,17 @@ export function ReelsPage() {
               </div>
               <div className="muted">
                 Reel #{r.id} · {r.updated_by ?? r.created_by ?? "—"} · {r.updated_at ?? r.created_at} UTC
-                {publishes
-                  .filter((p) => p.reel_id === r.id && p.status !== "canceled")
-                  .slice(0, 6)
-                  .map((p) =>
-                    p.url ? (
-                      <a key={p.id} className={`chip pub-${p.status}`} href={p.url} target="_blank" rel="noreferrer" title={p.channel_name ?? ""}>
-                        {p.channel_name ?? p.platform}: {PUBLISH_LABEL[p.status]}
-                      </a>
-                    ) : (
-                      <span key={p.id} className={`chip pub-${p.status}`} title={p.error ?? ""}>
-                        {p.channel_name ?? p.platform}: {PUBLISH_LABEL[p.status]}
-                      </span>
-                    ),
-                  )}
-                {r.youtube_url ? (
-                  <>
-                    {" · "}
-                    <a href={r.youtube_url} target="_blank" rel="noreferrer">
-                      YouTube
+                {platformPills(publishes.filter((p) => p.reel_id === r.id), r.youtube_url).map((pill) =>
+                  pill.url ? (
+                    <a key={pill.platform} className={`chip pub-${pill.kind}`} href={pill.url} target="_blank" rel="noreferrer" title={pill.title}>
+                      {pill.label}: {PILL_LABEL[pill.kind]}
                     </a>
-                  </>
-                ) : null}
+                  ) : (
+                    <span key={pill.platform} className={`chip pub-${pill.kind}`} title={pill.title}>
+                      {pill.label}: {PILL_LABEL[pill.kind]}
+                    </span>
+                  ),
+                )}
               </div>
               <div className="row small reel-actions">
                 <button onClick={() => navigate(`/reels/${r.id}`)}>খুলুন</button>
